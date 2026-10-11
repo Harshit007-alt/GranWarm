@@ -1,631 +1,294 @@
-<div align="center">
+# GranuWarm
 
-# 🔥 GranuWarm
+**Adaptive dependency-aware prewarming for serverless functions under
+non-stationary workloads**
 
-**Adaptive Dependency-Aware Prewarming for Serverless Functions**
-*Under Non-Stationary Workloads Using Fuzzy-Controlled Constrained Particle Swarm Optimization*
+GranuWarm is a closed-loop serverless resource-management architecture that
+combines workload telemetry, fuzzy control, dependency-aware warm layers, and
+constrained particle swarm optimization (PSO) to reduce cold-start latency
+under a cluster memory budget.
 
-&nbsp;
+This README describes the **target architecture**: the end-state system that
+the project is designed to implement. The implementation inventory and the
+steps required to reach this design are documented separately:
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Kubernetes](https://img.shields.io/badge/kubernetes-v1.28-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io/)
-[![Knative](https://img.shields.io/badge/knative-v1.13-0865AD?style=for-the-badge&logo=knative&logoColor=white)](https://knative.dev/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](CONTRIBUTING.md)
+- [Current architecture](docs/architecture/current-architecture.md)
+- [Architecture gap analysis and roadmap](docs/architecture/gap-analysis-and-roadmap.md)
 
-&nbsp;
+## Target architecture at a glance
 
-[📄 Abstract](#abstract) · [🏗️ Architecture](#architecture) · [👥 Team](#team) · [📁 Structure](#repository-structure) · [🚀 Quickstart](#getting-started) · [🤝 Contributing](#contributing--collaboration) · [📐 Math](#mathematical-foundation) · [🔬 RQs](#research-questions)
-
-</div>
-
----
-
-## Abstract
-
-Serverless computing delivers elastic, event-driven execution but suffers from **cold starts** — latency incurred when containers must be provisioned and initialized. **GranuWarm** is a closed-loop adaptive prewarming framework that integrates three complementary mechanisms:
-
-<table>
-  <tr>
-    <td align="center"><strong>🧮</strong></td>
-    <td><strong>Mamdani Fuzzy Inference System</strong></td>
-    <td>Maps real-time workload signals (invocation intensity, traffic trend, cold-start pressure, resource utilization) to per-function warm-capacity recommendations</td>
-  </tr>
-  <tr>
-    <td align="center"><strong>🌳</strong></td>
-    <td><strong>Dependency Granularity Tree</strong></td>
-    <td>Decomposes function software stacks into hierarchical shareable layers (runtimes → libraries → function code) to exploit inter-function overlap</td>
-  </tr>
-  <tr>
-    <td align="center"><strong>🎯</strong></td>
-    <td><strong>Constrained Particle Swarm Optimizer</strong></td>
-    <td>Globally optimizes warm-resource allocation across granularity-tree nodes under hard memory budgets</td>
-  </tr>
-</table>
-
-> 💡 **Dual-Timescale Architecture:** Fast fuzzy loop (**Δt = 10s**) for rapid adaptation + slow PSO loop (**Δt = 60s**) for global re-optimization.
-
----
-
-## Architecture
-
-```
-                     ┌─────────────────────────────────────────────────┐
-                     │            GranuWarm Control Loop               │
-                     │                                                 │
-   Prometheus ──────►│   ┌───────────┐     ┌────────────────────────┐  │
-   Metrics           │   │   Fuzzy   │────►│   Granularity Tree     │  │
-   (Rᵢ, Tᵢ,         │   │   Engine  │     │   (Max-Projection)     │  │
-    Cᵢ, M)           │   │   (10s)   │     └───────────┬────────────┘  │
-                     │   └───────────┘                 │               │
-                     │                                 ▼               │
-                     │                 ┌────────────────────────────┐   │───► Knative
-                     │                 │  Constrained PSO  (60s)   │   │     API
-                     │                 │  Budget-aware global       │   │     Patches
-                     │                 │  optimization              │   │
-                     │                 └────────────────────────────┘   │
-                     └─────────────────────────────────────────────────┘
-```
-
----
-
-## Team
-
-<table>
-  <tr>
-    <th>Member</th>
-    <th>Role</th>
-    <th>Phases</th>
-    <th>Key Deliverables</th>
-  </tr>
-  <tr>
-    <td><strong>Harshit Arya</strong></td>
-    <td>Lead Architect &amp; Constrained Optimization</td>
-    <td align="center">10, 11</td>
-    <td><code>controller/pso/</code>, <code>controller/main.py</code>, system integration</td>
-  </tr>
-  <tr>
-    <td><strong>Tijil Gupta</strong></td>
-    <td>Cloud Native Infrastructure &amp; Knative/Docker</td>
-    <td align="center">0–4</td>
-    <td><code>docker/</code>, <code>functions/F1–F12</code>, <code>configs/cluster_config.yaml</code></td>
-  </tr>
-  <tr>
-    <td><strong>Ayush Rawat</strong></td>
-    <td>Workload Profiling &amp; Simulation</td>
-    <td align="center">5–7</td>
-    <td><code>controller/monitor/</code>, <code>workload/</code>, <code>simulator/</code></td>
-  </tr>
-  <tr>
-    <td><strong>Bhavya Yadav</strong></td>
-    <td>Fuzzy Inference, Granularity Tree &amp; Evaluation</td>
-    <td align="center">8, 9, 12–14</td>
-    <td><code>controller/fuzzy/</code>, <code>controller/granularity/</code>, <code>experiments/</code></td>
-  </tr>
-</table>
-
-### Phase Dependency Chain
-
-```
-Phase 0–4 (Tijil)  ───────┐
-                           ├──► Phase 8–9 (Bhavya) ──► Phase 10 (Harshit)
-Phase 5–7 (Ayush)  ───────┘                                    │
-                                                                ▼
-                                                       Phase 11 (Harshit)
-                                                                │
-                                                                ▼
-                                                    Phase 12–14 (Bhavya + Harshit)
+```text
+                         +-----------------------------+
+                         |        Workload sources     |
+                         |  clients, traces, profiles  |
+                         +--------------+--------------+
+                                        |
+                                        v
+                         +-----------------------------+
+                         |   Serverless runtime plane  |
+                         |  Knative services/functions |
+                         +--------------+--------------+
+                                        |
+                 metrics                 | requests / latency
+                                        v
+ +------------------+       +-----------------------------+
+ | Prometheus        |------>| Telemetry and feature       |
+ | metrics store     |       | extraction                 |
+ +------------------+       | rate, trend, cold starts,  |
+                            | memory, SLA pressure        |
+                            +--------------+--------------+
+                                           |
+                                           v
+                            +-----------------------------+
+                            | Fast control loop            |
+                            | Fuzzy inference              |
+                            | every 10 seconds             |
+                            +--------------+--------------+
+                                           |
+                                           v
+                            +-----------------------------+
+                            | Dependency-granularity       |
+                            | graph / shared warm-layer    |
+                            | projection                  |
+                            +--------------+--------------+
+                                           |
+                         fuzzy prior       v
+                            +-----------------------------+
+                            | Slow global optimizer        |
+                            | constrained discrete PSO    |
+                            | every 60 seconds             |
+                            +--------------+--------------+
+                                           |
+                                           v
+                            +-----------------------------+
+                            | Policy and safety layer      |
+                            | hard memory budget           |
+                            | bounds, validation,          |
+                            | hysteresis, reconciliation   |
+                            +--------------+--------------+
+                                           |
+                                           v
+                            +-----------------------------+
+                            | Allocation actuator          |
+                            | shared layers + function     |
+                            | warm capacity                |
+                            +--------------+--------------+
+                                           |
+                                           v
+                         +-----------------------------+
+                         | Knative/Kubernetes runtime   |
+                         | deploy, prewarm, scale,       |
+                         | observe, reconcile            |
+                         +-----------------------------+
 ```
 
----
+## Target design principles
 
-## Repository Structure
+1. **Closed loop:** every allocation decision is based on observed workload
+   and runtime state.
+2. **Two timescales:** fuzzy control reacts quickly; PSO performs slower global
+   re-optimization.
+3. **Dependency awareness:** shared runtimes and libraries are represented as
+   reusable warm layers rather than treating every function as unrelated.
+4. **Budget safety:** no allocation may violate the configured memory budget.
+5. **Safe actuation:** changes are bounded, hysteresis-protected,
+   idempotent, observable, and reconciled after failures.
+6. **Simulation/live parity:** the simulator and the live controller use the
+   same telemetry, allocation, memory-accounting, and dependency semantics.
+7. **Reproducibility:** every experiment records configuration, code revision,
+   dependency versions, workload profile, and random seeds.
 
-```
-granuwarm/
-│
-├── 📄 README.md
-├── 📄 requirements.txt
-│
-├── ⚙️ configs/
-│   ├── cluster_config.yaml              # KinD multi-node cluster config
-│   ├── fuzzy_rules.json                 # 27 Mamdani fuzzy rules (Table 2)
-│   └── dependencies.json               # 12-function dependency hierarchy
-│
-├── 🐳 docker/
-│   ├── base_python/Dockerfile           # Python 3.11-slim base
-│   └── base_node/Dockerfile             # Node.js 20-slim base
-│
-├── ⚡ functions/                         # F1–F12 benchmark functions
-│   ├── f01_hello_world/
-│   ├── f02_json_transform/
-│   ├── f03_image_resize/
-│   ├── f04_image_filter/
-│   ├── f05_thumbnail_gen/
-│   ├── f06_ml_inference/
-│   ├── f07_sentiment_analysis/
-│   ├── f08_data_aggregate/
-│   ├── f09_csv_parser/
-│   ├── f10_auth_service/
-│   ├── f11_order_process/
-│   └── f12_notification/
-│
-├── 🧠 controller/
-│   ├── main.py                          # Dual-timescale control loop
-│   ├── monitor/
-│   │   └── prometheus_client.py         # PromQL signal extraction
-│   ├── fuzzy/
-│   │   └── fuzzy_engine.py              # 27-rule Mamdani FIS
-│   ├── granularity/
-│   │   └── tree.py                      # 3-layer dependency DAG
-│   ├── pso/
-│   │   └── pso_optimizer.py             # Discrete constrained PSO
-│   └── allocator/
-│       └── knative_scaler.py            # K8s API patching + hysteresis
-│
-├── 🔄 simulator/
-│   ├── env.py                           # Discrete-event FaaS simulation
-│   └── run_sim.py                       # CLI runner
-│
-├── 📊 workload/
-│   ├── profiles.py                      # W1–W5 rate functions
-│   └── generator.py                     # Async HTTP generator
-│
-├── 📏 baselines/
-│   ├── base_policy.py                   # Abstract interface
-│   ├── b1_no_prewarm.py
-│   ├── b2_fixed_prewarm.py
-│   ├── b3_fuzzy_only.py
-│   ├── b4_pso_only.py
-│   ├── b5_fuzzy_pso_no_granularity.py
-│   └── b6_granuwarm_full.py
-│
-├── 🧪 experiments/
-│   └── run_experiment.py                # 150-run experiment matrix
-│
-├── 🛠️ scripts/
-│   ├── setup_env.sh                     # KinD + Knative + Prometheus
-│   ├── reset_cluster.py                 # Inter-run cleanup
-│   └── plot_results.py                  # Publication figures + LaTeX
-│
-├── 📈 results/
-│   ├── raw/                             # CSV experiment logs
-│   ├── plots/                           # Generated figures
-│   └── tables/                          # LaTeX tables
-│
-├── ✅ tests/
-│   ├── test_fuzzy.py
-│   ├── test_tree.py
-│   └── test_pso.py
-│
-└── 📖 docs/
-    └── phase_guides/
-        ├── STAGE_1_INFRA_FUNCTIONS.md
-        ├── STAGE_2_TELEMETRY_SIMULATOR.md
-        ├── STAGE_3_INTELLIGENCE_CORE.md
-        └── STAGE_4_CONTROLLER_EXPERIMENTS_PAPER.md
+## Target components
+
+### 1. Runtime plane
+
+The runtime plane hosts heterogeneous Python and Node.js functions as Knative
+Services on Kubernetes. Each function has:
+
+- an immutable image and version;
+- a service identity;
+- runtime and dependency metadata;
+- memory and startup-cost estimates;
+- an allocation target that can be reconciled by the controller.
+
+The target design introduces a runtime abstraction for shared warm layers.
+Layer nodes may represent a runtime, shared library bundle, native library
+bundle, or function-specific code. The actuator must translate layer
+allocations into real runtime resources or an explicitly supported equivalent.
+
+### 2. Telemetry plane
+
+Prometheus collects the signals needed by the controller. For each function
+and shared layer, the telemetry adapter produces a typed feature record:
+
+| Signal | Meaning | Domain |
+| --- | --- | --- |
+| `R_i` | Invocation intensity | `[0, 1]` |
+| `T_i` | Traffic trend | `[-1, 1]` |
+| `C_i` | Cold-start pressure | `[0, 1]` |
+| `M` | Memory pressure | `[0, 1]` |
+| `L_i` | Observed latency features | milliseconds / quantiles |
+| `S_i` | SLA pressure | `[0, 1]` |
+
+Missing or stale required metrics are explicit controller errors. Synthetic
+fallback values are allowed only in simulator and test modes.
+
+### 3. Fast fuzzy controller
+
+Every 10 seconds, the controller:
+
+1. reads a consistent telemetry snapshot;
+2. evaluates the 27-rule Mamdani fuzzy system;
+3. produces a normalized warm-capacity recommendation per function;
+4. projects those recommendations over the dependency graph; and
+5. submits a bounded allocation prior to the policy layer.
+
+### 4. Dependency-granularity graph
+
+The dependency graph contains parent-child relationships between shared
+layers and function leaves. A function can depend on multiple reusable layers.
+The graph is responsible for:
+
+- determining which functions benefit from a warm layer;
+- calculating shared memory contribution;
+- calculating startup-time savings;
+- projecting function demand to layer demand; and
+- mapping a valid layer allocation back to executable function capacity.
+
+The simulator and live runtime must use the same graph semantics.
+
+### 5. Slow constrained PSO optimizer
+
+Every 60 seconds, PSO searches an integer allocation vector:
+
+```text
+x = [x_root, x_runtime, x_library, ..., x_function]
 ```
 
----
+The target objective combines:
 
-## Getting Started
+```text
+latency + cold-start cost + idle-memory cost + SLA cost
+```
 
-### Prerequisites
+subject to:
 
-<table>
-  <tr>
-    <th>Requirement</th>
-    <th>Version</th>
-  </tr>
-  <tr><td>🖥️ OS</td><td>Ubuntu 22.04 LTS (native, dual-boot, or VM)</td></tr>
-  <tr><td>⚙️ Hardware</td><td>≥ 8 CPU cores, ≥ 16 GB RAM</td></tr>
-  <tr><td>🐳 Docker</td><td>v26+</td></tr>
-  <tr><td>🐍 Python</td><td>3.11+</td></tr>
-</table>
+```text
+total shared and function memory <= configured budget
+allocation bounds and dependency constraints
+```
 
-### Step 1 — Clone & Setup
+Infeasible candidates are rejected or repaired before actuation. Penalties may
+shape optimization, but they do not replace hard feasibility checks.
+
+### 6. Safety and actuation layer
+
+Before a change reaches Kubernetes, the policy layer must:
+
+- validate the complete allocation;
+- enforce minimum and maximum capacity;
+- enforce the memory budget;
+- reject stale decisions;
+- apply hysteresis to scale-down;
+- rate-limit changes;
+- emit an auditable decision record; and
+- reconcile desired state with observed state.
+
+The actuator then applies changes to shared warm-layer resources and Knative
+function services through an idempotent Kubernetes adapter.
+
+## Target control loop
+
+```text
+1. Observe
+   Prometheus -> typed telemetry snapshot
+
+2. React
+   telemetry -> fuzzy recommendation per function
+
+3. Project
+   function recommendations -> dependency-layer priorities
+
+4. Optimize
+   priorities + measured metrics -> feasible PSO allocation
+
+5. Validate
+   budget, bounds, freshness, hysteresis, safety policy
+
+6. Actuate
+   desired allocation -> Kubernetes/Knative resources
+
+7. Reconcile
+   observed state and metrics -> next control cycle
+```
+
+## Target operating modes
+
+| Mode | Purpose |
+| --- | --- |
+| Simulation | Fast, deterministic evaluation with the same policy interfaces |
+| Shadow | Read telemetry and calculate decisions without changing Kubernetes |
+| Dry run | Emit validated actuator operations without applying them |
+| Live | Apply decisions with retries, reconciliation, and audit logs |
+| Replay | Re-run a recorded telemetry trace for regression testing |
+
+## Target evaluation
+
+The target evaluation compares:
+
+- no prewarming;
+- fixed prewarming;
+- fuzzy-only control;
+- PSO-only control;
+- fuzzy + PSO without dependency granularity; and
+- the complete GranuWarm architecture.
+
+Each experiment should report latency quantiles, cold-start rate, SLA
+violations, used memory, idle memory, controller overhead, allocation changes,
+and budget violations. Results must be reproducible across W1–W5 workload
+profiles and fixed random seeds.
+
+## Repository orientation
+
+| Area | Target responsibility |
+| --- | --- |
+| `controller/` | Telemetry, fuzzy inference, graph projection, optimization, actuation |
+| `configs/` | Function metadata, dependency graph, fuzzy rules, cluster settings |
+| `simulator/` | Offline implementation of the target control semantics |
+| `baselines/` | Ablation and comparison policies |
+| `workload/` | Workload profiles and live traffic generation |
+| `experiments/` | Matrix execution and result collection |
+| `functions/` | Heterogeneous serverless workloads |
+| `scripts/` | Cluster setup, cleanup, plotting, and reporting |
+| `docs/architecture/` | Target design, current implementation, and migration plan |
+
+## Getting started
+
+The simulator is the first target-compatible execution environment:
 
 ```bash
-git clone https://github.com/Harshit007-alt/GranWarm.git granuwarm && cd granuwarm
-python3 -m venv venv && source venv/bin/activate
-pip install --upgrade pip && pip install -r requirements.txt
+python -m pytest tests -q
+python simulator/run_sim.py \
+  --workload W3 \
+  --policy granuwarm \
+  --duration 300 \
+  --seed 42
 ```
 
-### Step 2 — Create KinD Cluster
-
-```bash
-curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
-chmod +x ./kind && sudo mv ./kind /usr/local/bin/kind
-kind create cluster --config configs/cluster_config.yaml --name granuwarm-local
-```
-
-### Step 3 — Install Knative + Prometheus
-
-```bash
-chmod +x scripts/setup_env.sh && ./scripts/setup_env.sh
-```
-
-### Step 4 — Build & Deploy Functions
-
-```bash
-for dir in functions/f*/; do
-    fname=$(basename "$dir")
-    docker build -t "granuwarm/${fname}:v1" "$dir"
-    kind load docker-image "granuwarm/${fname}:v1" --name granuwarm-local
-done
-
-kubectl apply -f functions/
-```
-
-### Step 5 — Run Controller
-
-```bash
-python controller/main.py &
-python workload/generator.py --profile W3 --duration 300 --seed 42
-```
-
-### Step 6 — Run Experiments
-
-```bash
-python experiments/run_experiment.py --full
-python scripts/plot_results.py
-```
-
----
-
-## Contributing & Collaboration
-
-We welcome contributions from team members, lab colleagues, and the broader research community.
-
-<details>
-<summary><strong>📥 1 · Fork & Clone</strong></summary>
-
-&nbsp;
-
-```bash
-# Fork via GitHub UI → click "Fork" button (top-right)
-
-# Clone YOUR fork
-git clone https://github.com/<your-username>/granuwarm.git
-cd granuwarm
-
-# Add upstream remote
-git remote add upstream https://github.com/Harshit007-alt/GranWarm.git
-
-# Verify
-git remote -v
-```
-
-</details>
-
-<details>
-<summary><strong>🔄 2 · Stay in Sync</strong></summary>
-
-&nbsp;
-
-Always pull upstream changes before starting new work:
-
-```bash
-git checkout main
-git fetch upstream
-git merge upstream/main
-git push origin main
-```
-
-</details>
-
-<details>
-<summary><strong>🌿 3 · Branch Naming</strong></summary>
-
-&nbsp;
-
-> ⚠️ **Never commit directly to `main`.**
-
-| Prefix | Use Case | Example |
-|:---|:---|:---|
-| `feature/` | New features | `feature/phase8-fuzzy-engine` |
-| `bugfix/` | Bug fixes | `bugfix/42-pso-convergence` |
-| `docs/` | Documentation | `docs/add-api-reference` |
-| `experiment/` | Experiment runs | `experiment/w4-burst-profile` |
-
-```bash
-git checkout -b feature/phase8-fuzzy-engine
-```
-
-</details>
-
-<details>
-<summary><strong>🔨 4 · Development Workflow</strong></summary>
-
-&nbsp;
-
-```bash
-# Setup (first time)
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Make changes, then test
-python -m pytest tests/ -v
-
-# Optional: validate with simulator
-python simulator/run_sim.py --workload W1 --duration 300 --seed 42
-```
-
-</details>
-
-<details>
-<summary><strong>💬 5 · Commit Messages</strong></summary>
-
-&nbsp;
-
-We use **[Conventional Commits](https://www.conventionalcommits.org/)**:
-
-```
-<type>(<scope>): <short description>
-```
-
-| Type | When to Use |
-|:---|:---|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation only |
-| `test` | Adding/updating tests |
-| `refactor` | Code change with no feature/fix |
-| `perf` | Performance improvement |
-| `experiment` | Experiment configs/results |
-
-```bash
-git commit -m "feat(fuzzy): implement 27-rule Mamdani FIS with centroid defuzzification"
-git commit -m "fix(simulator): enforce memory budget cap in step_invoke"
-git commit -m "experiment(matrix): add W4 burst-spike workload to run matrix"
-```
-
-> **Tips:** Keep commits atomic · Use imperative mood · Reference issues: `fix(pso): edge case (#17)`
-
-</details>
-
-<details>
-<summary><strong>🚀 6 · Opening a Pull Request</strong></summary>
-
-&nbsp;
-
-```bash
-git push origin feature/phase8-fuzzy-engine
-```
-
-Then open a PR on GitHub using this template:
-
-```markdown
-## Summary
-Brief description of what this PR implements or fixes.
-
-## Related Phase
-Phase 8 — Fuzzy Inference System
-
-## Changes
-- [ ] Added `controller/fuzzy/fuzzy_engine.py` with 27 Mamdani rules
-- [ ] Added `tests/test_fuzzy.py` with 8 unit tests
-- [ ] Updated `configs/fuzzy_rules.json`
-
-## Testing
-- [ ] All existing tests pass (`python -m pytest tests/ -v`)
-- [ ] New tests added and passing
-- [ ] Simulator validation completed (if applicable)
-
-## Verification Criteria
-- [ ] FIS output is monotonic for increasing invocation rate
-- [ ] Centroid defuzzification yields values in [0, 1]
-```
-
-</details>
-
-<details>
-<summary><strong>👀 7 · Code Review</strong></summary>
-
-&nbsp;
-
-All PRs require **at least one approving review** before merge.
-
-| Step | Action | Owner |
-|:---:|:---|:---|
-| 1 | Open PR with description & linked issues | Author |
-| 2 | Assign reviewer based on phase ownership | Author |
-| 3 | Reviewer leaves inline comments or approves | Reviewer |
-| 4 | Author addresses feedback, pushes fixes | Author |
-| 5 | Reviewer re-reviews and approves | Reviewer |
-| 6 | **Squash & merge** into `main` | Author / Lead |
-
-**Reviewer assignments:**
-
-| Changes in… | Reviewer |
-|:---|:---|
-| Phase 0–4 (infra, Docker, Knative) | **Tijil Gupta** |
-| Phase 5–7 (workload, simulator) | **Ayush Rawat** |
-| Phase 8–9, 12–14 (fuzzy, tree, experiments) | **Bhavya Yadav** |
-| Phase 10–11 (PSO, controller) | **Harshit Arya** |
-| Cross-phase | **Two reviewers** |
-
-</details>
-
-<details>
-<summary><strong>🏷️ 8 · Issue Tracking</strong></summary>
-
-&nbsp;
-
-Use GitHub Issues with these labels:
-
-| Label | Meaning |
-|:---|:---|
-| 🐛 `bug` | Something isn't working |
-| ✨ `enhancement` | New feature or improvement |
-| 📄 `documentation` | Docs updates |
-| 🔬 `experiment` | Experiment design or execution |
-| 🏗️ `infrastructure` | Docker, K8s, Knative setup |
-| 🔴 `priority:high` | Blocking other work |
-| 🟡 `priority:medium` | Important but not blocking |
-| 🟢 `priority:low` | Nice to have |
-
-**Issue title format:** `[Phase N] Short description`
-
-</details>
-
-<details>
-<summary><strong>🔒 9 · Branch Protection</strong></summary>
-
-&nbsp;
-
-The `main` branch enforces:
-
-- ✅ Pull request required before merging
-- ✅ At least 1 approving review
-- ✅ Status checks (unit tests) must pass
-- ✅ Branch must be up-to-date before merge
-- ❌ Direct pushes **blocked**
-
-</details>
-
-<details>
-<summary><strong>💬 10 · Communication</strong></summary>
-
-&nbsp;
-
-| Channel | Purpose |
-|:---|:---|
-| **GitHub Issues** | Bug reports, feature requests, task tracking |
-| **GitHub Discussions** | Design decisions, architecture Q&A |
-| **PR Comments** | Code-level feedback |
-| **Weekly Sync** | 30-min video call — progress + blockers |
-
-> **Tips:** Tag teammates with `@username` · Use `WIP:` prefix for draft PRs · Post experiment plots in issue comments
-
-</details>
-
-### Quick Reference Scenarios
-
-<details>
-<summary>🐛 <strong>Fix a bug</strong></summary>
-
-```bash
-git checkout main && git pull upstream main
-git checkout -b bugfix/42-memory-leak-in-simulator
-# ... make fix ...
-python -m pytest tests/ -v
-git add -A && git commit -m "fix(simulator): patch memory leak in step_invoke (#42)"
-git push origin bugfix/42-memory-leak-in-simulator
-# → Open PR on GitHub
-```
-
-</details>
-
-<details>
-<summary>✨ <strong>Add a new workload profile</strong></summary>
-
-```bash
-git checkout main && git pull upstream main
-git checkout -b feature/w6-periodic-burst
-# Edit workload/profiles.py — add W6 function
-# Edit workload/generator.py — register W6
-# Add test in tests/test_workload.py
-python -m pytest tests/ -v
-git add -A && git commit -m "feat(workload): add W6 periodic-burst profile"
-git push origin feature/w6-periodic-burst
-# → Open PR on GitHub
-```
-
-</details>
-
-<details>
-<summary>📄 <strong>Improve documentation</strong></summary>
-
-```bash
-git checkout main && git pull upstream main
-git checkout -b docs/improve-phase-guide-stage3
-# Edit docs/phase_guides/STAGE_3_INTELLIGENCE_CORE.md
-git add -A && git commit -m "docs(phase-guide): clarify PSO convergence criteria"
-git push origin docs/improve-phase-guide-stage3
-# → Open PR on GitHub
-```
-
-</details>
-
-<details>
-<summary>🔬 <strong>Run & submit experiment results</strong></summary>
-
-```bash
-git checkout main && git pull upstream main
-git checkout -b experiment/run-w3-full-matrix
-python experiments/run_experiment.py --workload W3 --policies all --runs 5
-python scripts/plot_results.py
-git add results/raw/ results/plots/ results/tables/
-git commit -m "experiment(W3): complete 30-run matrix for W3 diurnal workload"
-git push origin experiment/run-w3-full-matrix
-# → Open PR with plot screenshots in the description
-```
-
-</details>
-
----
-
-## Mathematical Foundation
-
-### Composite Fitness Function (PSO Objective)
-
-```
-J(x) = w_L · L̄(x) + w_C · C̄(x) + w_M · M̂(x) + w_S · S̄(x)
-     + ρ · max(0, Σ mᵥₖ · xₖ − M_budget)²
-```
-
-<table>
-  <tr>
-    <th>Weight</th>
-    <th>Symbol</th>
-    <th align="center">Default</th>
-  </tr>
-  <tr><td>Latency</td><td><code>w_L</code></td><td align="center">0.35</td></tr>
-  <tr><td>Cold-Start Rate</td><td><code>w_C</code></td><td align="center">0.25</td></tr>
-  <tr><td>Idle Memory</td><td><code>w_M</code></td><td align="center">0.25</td></tr>
-  <tr><td>SLA Violations</td><td><code>w_S</code></td><td align="center">0.15</td></tr>
-  <tr><td>Penalty Coefficient</td><td><code>ρ</code></td><td align="center">100</td></tr>
-</table>
-
-### PSO Hyperparameters
-
-<table>
-  <tr>
-    <th>Parameter</th>
-    <th align="center">Value</th>
-  </tr>
-  <tr><td>Swarm Size</td><td align="center">30</td></tr>
-  <tr><td>Max Iterations</td><td align="center">50</td></tr>
-  <tr><td>Inertia <code>ω</code></td><td align="center">0.7 → 0.4 (linear decay)</td></tr>
-  <tr><td>Cognitive <code>c₁</code></td><td align="center">1.5</td></tr>
-  <tr><td>Social <code>c₂</code></td><td align="center">1.5</td></tr>
-</table>
-
-### Control Loop Intervals
-
-<table>
-  <tr>
-    <th>Loop</th>
-    <th align="center">Interval</th>
-    <th>Purpose</th>
-  </tr>
-  <tr><td>Fast (Fuzzy)</td><td align="center"><code>Δt = 10s</code></td><td>Rapid reactive adaptation</td></tr>
-  <tr><td>Slow (PSO)</td><td align="center"><code>Δt = 60s</code></td><td>Global re-optimization</td></tr>
-  <tr><td>Hysteresis</td><td align="center"><code>ε = 2</code></td><td>Flapping prevention</td></tr>
-</table>
-
----
-
-## Research Questions
-
-> **RQ1** — Does workload-aware fuzzy control reduce cold-start frequency and latency compared to fixed/static prewarming?
->
-> **RQ2** — Does constrained PSO optimization improve the latency–resource tradeoff beyond what either technique achieves independently?
->
-> **RQ3** — Does incorporating dependency-granularity structure improve resource efficiency compared to function-level prewarming?
-
----
+For the live Kubernetes path, see the implementation and migration documents
+before enabling actuation:
+
+- [Current architecture](docs/architecture/current-architecture.md)
+- [Architecture gap analysis and roadmap](docs/architecture/gap-analysis-and-roadmap.md)
+
+## Research questions
+
+1. Does workload-aware fuzzy control reduce cold-start frequency and latency
+   compared with no or fixed prewarming?
+2. Does constrained PSO improve the latency/resource trade-off beyond fuzzy
+   control alone?
+3. Does dependency-granularity modeling improve resource efficiency compared
+   with function-level prewarming?
 
 ## Citation
 
@@ -638,19 +301,3 @@ J(x) = w_L · L̄(x) + w_C · C̄(x) + w_M · M̂(x) + w_S · S̄(x)
   year    = {2026}
 }
 ```
-
----
-
-## License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**Built with ❤️ by the GranuWarm Research Team**
-
-*Harshit Arya · Tijil Gupta · Ayush Rawat · Bhavya Yadav*
-
-</div>
