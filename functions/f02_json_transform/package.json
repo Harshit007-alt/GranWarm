@@ -1,0 +1,8 @@
+{
+  "name": "f02-json-transform",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

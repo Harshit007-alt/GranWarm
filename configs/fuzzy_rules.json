@@ -1,0 +1,61 @@
+{
+  "membership_functions": {
+    "R": {
+      "LOW": {"type": "trapmf", "params": [0.0, 0.0, 0.15, 0.35]},
+      "MEDIUM": {"type": "trimf", "params": [0.2, 0.5, 0.8]},
+      "HIGH": {"type": "trapmf", "params": [0.65, 0.85, 1.0, 1.0]}
+    },
+    "T": {
+      "FALLING": {"type": "trapmf", "params": [-1.0, -1.0, -0.5, -0.1]},
+      "STABLE": {"type": "trimf", "params": [-0.2, 0.0, 0.2]},
+      "RISING": {"type": "trimf", "params": [0.1, 0.4, 0.7]},
+      "SURGING": {"type": "trapmf", "params": [0.5, 0.8, 1.0, 1.0]}
+    },
+    "C": {
+      "LOW": {"type": "trapmf", "params": [0.0, 0.0, 0.1, 0.3]},
+      "MEDIUM": {"type": "trimf", "params": [0.15, 0.4, 0.65]},
+      "HIGH": {"type": "trapmf", "params": [0.5, 0.7, 1.0, 1.0]}
+    },
+    "M": {
+      "LOW": {"type": "trapmf", "params": [0.0, 0.0, 0.3, 0.5]},
+      "MEDIUM": {"type": "trimf", "params": [0.35, 0.55, 0.75]},
+      "HIGH": {"type": "trapmf", "params": [0.65, 0.8, 1.0, 1.0]}
+    },
+    "P": {
+      "VERY_LOW": {"type": "trapmf", "params": [0.0, 0.0, 0.05, 0.2]},
+      "LOW": {"type": "trimf", "params": [0.1, 0.25, 0.4]},
+      "MEDIUM": {"type": "trimf", "params": [0.3, 0.5, 0.7]},
+      "HIGH": {"type": "trimf", "params": [0.6, 0.75, 0.9]},
+      "VERY_HIGH": {"type": "trapmf", "params": [0.8, 0.95, 1.0, 1.0]}
+    }
+  },
+  "rules": [
+    {"id": 1, "R": "LOW", "T": "FALLING", "C": "LOW", "M": null, "P": "VERY_LOW"},
+    {"id": 2, "R": "LOW", "T": "STABLE", "C": "LOW", "M": null, "P": "VERY_LOW"},
+    {"id": 3, "R": "LOW", "T": "STABLE", "C": "MEDIUM", "M": "LOW", "P": "LOW"},
+    {"id": 4, "R": "LOW", "T": "STABLE", "C": "MEDIUM", "M": "MEDIUM", "P": "VERY_LOW"},
+    {"id": 5, "R": "LOW", "T": "RISING", "C": "LOW", "M": "LOW", "P": "LOW"},
+    {"id": 6, "R": "LOW", "T": "RISING", "C": "MEDIUM", "M": "LOW", "P": "MEDIUM"},
+    {"id": 7, "R": "LOW", "T": "RISING", "C": "HIGH", "M": "LOW", "P": "MEDIUM"},
+    {"id": 8, "R": "LOW", "T": "SURGING", "C": null, "M": "LOW", "P": "MEDIUM"},
+    {"id": 9, "R": "LOW", "T": "SURGING", "C": null, "M": "HIGH", "P": "LOW"},
+    {"id": 10, "R": "MEDIUM", "T": "FALLING", "C": "LOW", "M": null, "P": "LOW"},
+    {"id": 11, "R": "MEDIUM", "T": "STABLE", "C": "LOW", "M": "LOW", "P": "MEDIUM"},
+    {"id": 12, "R": "MEDIUM", "T": "STABLE", "C": "LOW", "M": "HIGH", "P": "LOW"},
+    {"id": 13, "R": "MEDIUM", "T": "STABLE", "C": "MEDIUM", "M": "LOW", "P": "MEDIUM"},
+    {"id": 14, "R": "MEDIUM", "T": "STABLE", "C": "HIGH", "M": "LOW", "P": "HIGH"},
+    {"id": 15, "R": "MEDIUM", "T": "RISING", "C": "LOW", "M": "LOW", "P": "MEDIUM"},
+    {"id": 16, "R": "MEDIUM", "T": "RISING", "C": "MEDIUM", "M": "LOW", "P": "HIGH"},
+    {"id": 17, "R": "MEDIUM", "T": "RISING", "C": "HIGH", "M": "LOW", "P": "HIGH"},
+    {"id": 18, "R": "MEDIUM", "T": "SURGING", "C": null, "M": "LOW", "P": "HIGH"},
+    {"id": 19, "R": "MEDIUM", "T": "SURGING", "C": null, "M": "HIGH", "P": "MEDIUM"},
+    {"id": 20, "R": "HIGH", "T": "FALLING", "C": "LOW", "M": null, "P": "MEDIUM"},
+    {"id": 21, "R": "HIGH", "T": "STABLE", "C": "LOW", "M": "LOW", "P": "HIGH"},
+    {"id": 22, "R": "HIGH", "T": "STABLE", "C": "MEDIUM", "M": "LOW", "P": "HIGH"},
+    {"id": 23, "R": "HIGH", "T": "STABLE", "C": "HIGH", "M": "LOW", "P": "VERY_HIGH"},
+    {"id": 24, "R": "HIGH", "T": "RISING", "C": null, "M": "LOW", "P": "VERY_HIGH"},
+    {"id": 25, "R": "HIGH", "T": "RISING", "C": null, "M": "HIGH", "P": "HIGH"},
+    {"id": 26, "R": "HIGH", "T": "SURGING", "C": null, "M": "LOW", "P": "VERY_HIGH"},
+    {"id": 27, "R": "HIGH", "T": "SURGING", "C": null, "M": "HIGH", "P": "HIGH"}
+  ]
+}

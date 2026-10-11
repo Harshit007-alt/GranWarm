@@ -1,0 +1,24 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: f07-sentiment-analysis
+  namespace: default
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "10"
+        autoscaling.knative.dev/target: "10"
+    spec:
+      containers:
+        - image: granuwarm/f07_sentiment_analysis:v1
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "2048Mi"
+              cpu: "1000m"
+            limits:
+              memory: "2048Mi"
+              cpu: "4000m"
