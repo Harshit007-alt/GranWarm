@@ -1,6 +1,6 @@
 {
   "nodes": [
-    {"id": "root", "name": "System Root", "layer": -1, "memory_mb": 0, "init_time_ms": 0, "parent": null},
+    {"id": "root", "name": "System Root", "layer": -1, "memory_mb": 0, "init_time_ms": 0, "parent": null,"allocatable": false},
     {"id": "python_311", "name": "Python 3.11 Runtime", "layer": 0, "memory_mb": 80, "init_time_ms": 200, "parent": "root"},
     {"id": "nodejs_20", "name": "Node.js 20 Runtime", "layer": 0, "memory_mb": 40, "init_time_ms": 100, "parent": "root"},
     {"id": "shared_native_libs", "name": "OS Native Shared C-Libs", "layer": 0, "memory_mb": 15, "init_time_ms": 20, "parent": "root"},

@@ -8,7 +8,7 @@ class TestGranularityTree(unittest.TestCase):
 
     def test_total_nodes(self):
         """Granularity tree must define K=20 total nodes."""
-        self.assertEqual(self.tree.get_total_nodes(), 20)
+        self.assertEqual(self.tree.get_total_nodes(), 19)
 
     def test_max_projection(self):
         """Pillow bundle node must take the maximum of F3, F4, F5."""
@@ -30,6 +30,13 @@ class TestGranularityTree(unittest.TestCase):
             path = self.tree.get_dependency_path(fid)
             self.assertGreaterEqual(len(path), 2, f"Function {fid} path too short: {path}")
             self.assertEqual(path[0], "root")
+
+        def test_root_excluded_from_allocatable(self):
+            """Root is structural and must not appear in the allocatable vector."""
+            self.assertNotIn("root", self.tree.node_ids)
+            self.assertIn("root", self.tree.all_node_ids)
+            self.assertFalse(self.tree.is_allocatable("root"))
+            self.assertTrue(self.tree.is_allocatable("python_311"))
 
 
 if __name__ == "__main__":
