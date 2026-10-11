@@ -1,8 +1,10 @@
-<![CDATA[# STAGE 1: Infrastructure & Function Deployment
+# 🏗️ STAGE 1: Infrastructure & Function Deployment
 
-> **Assigned to: Tijil Gupta** — Cloud Native Infrastructure & Knative/Docker Lead
-> **Phases: 0 → 1 → 2 → 3 → 4**
-> **Estimated Duration: 2–3 weeks**
+> **Assigned to:** Tijil Gupta — Cloud Native Infrastructure & Knative/Docker Lead
+>
+> **Phases:** 0 → 1 → 2 → 3 → 4
+>
+> **Estimated Duration:** 2–3 weeks
 
 ---
 
@@ -15,6 +17,7 @@ This stage builds the entire cloud-native foundation that GranuWarm runs on. By 
 ## Phase 0 — Prerequisites
 
 ### 0.1 Learning Objectives
+
 - Linux CLI proficiency (Bash navigation, process management, `$PATH`, environment variables)
 - Python 3.11 core (asyncio, type hints, venv, pip)
 - Git fundamentals (init, commit, branch, .gitignore)
@@ -23,6 +26,7 @@ This stage builds the entire cloud-native foundation that GranuWarm runs on. By 
 
 ```bash
 # 1. Ensure Ubuntu 22.04 LTS with ≥8 CPU cores, ≥16 GB RAM
+
 # 2. Install system utilities
 sudo apt update && sudo apt install -y \
     curl git htop jq build-essential \
@@ -40,12 +44,14 @@ pip install --upgrade pip
 ```
 
 ### 0.3 Verification Checklist
+
 - [ ] `python3 --version` → ≥ 3.11
 - [ ] `git --version` → git version 2.x
 - [ ] `jq --version` → jq-1.x
 - [ ] Virtual environment active (prompt shows `(venv)`)
 
 ### 0.4 Common Pitfalls
+
 | Issue | Solution |
 |:---|:---|
 | Python < 3.11 | `sudo add-apt-repository ppa:deadsnakes/ppa && sudo apt install python3.11` |
@@ -56,8 +62,9 @@ pip install --upgrade pip
 ## Phase 1 — Docker
 
 ### 1.1 Learning Objectives
+
 - Container isolation (namespaces, cgroups, OverlayFS)
-- Dockerfile syntax (FROM, WORKDIR, COPY, RUN, CMD)
+- Dockerfile syntax (`FROM`, `WORKDIR`, `COPY`, `RUN`, `CMD`)
 - Multi-stage builds and slim images
 
 ### 1.2 Practical Steps
@@ -70,9 +77,10 @@ newgrp docker
 docker --version  # Verify ≥ 26.0
 ```
 
-#### Create Base Dockerfiles
+### 1.3 Create Base Dockerfiles
 
-**`docker/base_python/Dockerfile`**:
+**`docker/base_python/Dockerfile`:**
+
 ```dockerfile
 FROM python:3.11-slim
 WORKDIR /app
@@ -81,7 +89,8 @@ ENV PORT=8080
 EXPOSE 8080
 ```
 
-**`docker/base_node/Dockerfile`**:
+**`docker/base_node/Dockerfile`:**
+
 ```dockerfile
 FROM node:20-slim
 WORKDIR /app
@@ -90,7 +99,7 @@ ENV PORT=8080
 EXPOSE 8080
 ```
 
-#### Build F1 (Hello World — Node.js) and F3 (Image Resize — Python)
+### 1.4 Build F1 (Hello World) and F3 (Image Resize)
 
 ```bash
 # F1: Lightweight Node.js function
@@ -113,10 +122,10 @@ curl http://localhost:8081
 docker stop test_f1 && docker rm test_f1
 ```
 
-### 1.3 All 12 Function Images to Build
+### 1.5 All 12 Function Images
 
-| ID | Function | Runtime | Base Image | Key Dependencies | Target Image Size |
-|:---|:---|:---|:---|:---|:---|
+| ID | Function | Runtime | Base Image | Key Dependencies | Target Size |
+|:---:|:---|:---:|:---|:---|:---:|
 | F1 | helloWorld | Node.js 20 | `node:20-slim` | minimal | < 200 MB |
 | F2 | jsonTransform | Node.js 20 | `node:20-slim` | lodash | < 200 MB |
 | F3 | imageResize | Python 3.11 | `python:3.11-slim` | Pillow, numpy | < 500 MB |
@@ -130,7 +139,8 @@ docker stop test_f1 && docker rm test_f1
 | F11 | orderProcess | Python 3.11 | `python:3.11-slim` | requests, sqlalchemy | < 400 MB |
 | F12 | notification | Node.js 20 | `node:20-slim` | firebase-admin | < 300 MB |
 
-### 1.4 Verification
+### 1.6 Verification
+
 - [ ] `docker images | grep granuwarm` shows all 12 images
 - [ ] Each image runs, responds on port 8080, and returns valid JSON
 - [ ] All Python images use `python:3.11-slim` (< 150 MB base)
@@ -141,8 +151,9 @@ docker stop test_f1 && docker rm test_f1
 ## Phase 2 — Kubernetes Concepts
 
 ### 2.1 Learning Objectives
+
 - Core K8s abstractions: Pod, Deployment, Service, Namespace, ConfigMap
-- `kubectl` CLI: get, describe, apply, logs, delete
+- `kubectl` CLI: `get`, `describe`, `apply`, `logs`, `delete`
 - YAML manifest structure
 
 ### 2.2 Practical Steps
@@ -153,20 +164,20 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 ```
 
-### 2.3 Key Concepts to Master
+### 2.3 Key Concepts
 
 ```
 ┌─────────────────────────────────────┐
-│           Kubernetes Cluster         │
+│         Kubernetes Cluster          │
 │                                     │
 │  ┌──────────┐    ┌──────────┐      │
-│  │  Node 1   │    │  Node 2   │     │
-│  │ ┌──────┐  │    │ ┌──────┐  │     │
-│  │ │ Pod  │  │    │ │ Pod  │  │     │
-│  │ │┌────┐│  │    │ │┌────┐│  │     │
-│  │ ││Ctr ││  │    │ ││Ctr ││  │     │
-│  │ │└────┘│  │    │ │└────┘│  │     │
-│  │ └──────┘  │    │ └──────┘  │     │
+│  │  Node 1  │    │  Node 2  │      │
+│  │ ┌──────┐ │    │ ┌──────┐ │      │
+│  │ │ Pod  │ │    │ │ Pod  │ │      │
+│  │ │┌────┐│ │    │ │┌────┐│ │      │
+│  │ ││ Ctr││ │    │ ││ Ctr││ │      │
+│  │ │└────┘│ │    │ │└────┘│ │      │
+│  │ └──────┘ │    │ └──────┘ │      │
 │  └──────────┘    └──────────┘      │
 │                                     │
 │     Service (Load Balancer)         │
@@ -175,6 +186,7 @@ sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 ```
 
 ### 2.4 Verification
+
 - [ ] `kubectl version --client` → client version v1.28+
 - [ ] Can explain difference between Deployment (desired state) and Service (network endpoint)
 - [ ] Understand label selectors for routing
@@ -184,6 +196,7 @@ sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
 ## Phase 3 — KinD (Kubernetes-in-Docker)
 
 ### 3.1 Learning Objectives
+
 - KinD local cluster provisioning
 - Port mapping (host 80/443 → KinD node)
 - Loading local Docker images into KinD nodes
@@ -233,6 +246,7 @@ done
 ```
 
 ### 3.3 Verification
+
 - [ ] `kubectl cluster-info --context kind-granuwarm-local` → cluster running
 - [ ] `kubectl get nodes` → 1 control-plane + 3 workers, all `Ready`
 - [ ] `kind get clusters` → lists `granuwarm-local`
@@ -242,6 +256,7 @@ done
 ## Phase 4 — Knative Serving
 
 ### 4.1 Learning Objectives
+
 - Knative Service CRDs (Service → Configuration → Revision → Route)
 - Knative Pod Autoscaler (KPA) and scale-to-zero
 - Controlling `autoscaling.knative.dev/min-scale` annotation
@@ -332,7 +347,7 @@ spec:
               cpu: "500m"
 ```
 
-Repeat for all 12 functions with appropriate memory limits from Table 4.
+> Repeat for all 12 functions with appropriate memory limits from Table 4.
 
 ### 4.4 Deploy & Test
 
@@ -354,6 +369,7 @@ kubectl get pods  # Should show 0 pods for idle functions
 ```
 
 ### 4.5 Verification Checklist
+
 - [ ] All 12 Knative services show `READY=True` in `kubectl get ksvc`
 - [ ] First invocation of each function incurs cold-start delay matching Table 4 estimates
 - [ ] Subsequent invocations return in < 10ms (warm)
@@ -362,8 +378,8 @@ kubectl get pods  # Should show 0 pods for idle functions
 
 ### 4.6 Function Characteristics Reference (Table 4)
 
-| ID | Function | Runtime | Container Memory | Cold-Start Time | Category |
-|:---|:---|:---|:---|:---|:---|
+| ID | Function | Runtime | Memory | Cold-Start | Category |
+|:---:|:---|:---:|:---:|:---:|:---:|
 | F1 | helloWorld | Node.js 20 | 128 MB | ~150 ms | Lightweight |
 | F2 | jsonTransform | Node.js 20 | 128 MB | ~200 ms | Lightweight |
 | F3 | imageResize | Python 3.11 | 512 MB | ~1.2 s | Image |
@@ -379,7 +395,6 @@ kubectl get pods  # Should show 0 pods for idle functions
 
 ---
 
-## Handoff to Stage 2
+## ➡️ Handoff to Stage 2
 
 Once all 12 functions deploy, respond to HTTP, and auto-scale to zero, notify **Ayush Rawat** to begin Phase 5 (Prometheus monitoring setup). The KinD cluster and Knative installation must be stable and reproducible via `scripts/setup_env.sh`.
-]]>

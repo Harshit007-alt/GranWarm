@@ -1,66 +1,75 @@
-<![CDATA[# STAGE 3: Intelligence Core — Fuzzy, Granularity Tree & PSO
+# 🧠 STAGE 3: Intelligence Core — Fuzzy, Granularity Tree & PSO
 
-> **Assigned to: Member 4 (Phases 8–9) + Harshit Arya (Phase 10)**
-> **Phases: 8 → 9 → 10**
-> **Estimated Duration: 3 weeks**
-> **Prerequisites: Stage 2 complete (Prometheus signals + simulator working)**
+> **Assigned to:** Bhavya Yadav (Phases 8–9) + Harshit Arya (Phase 10)
+>
+> **Phases:** 8 → 9 → 10
+>
+> **Estimated Duration:** 3 weeks
+>
+> **Prerequisites:** Stage 2 complete (Prometheus signals + simulator working)
 
 ---
 
 ## Phase 8 — Mamdani Fuzzy Inference System
 
 ### 8.1 Learning Objectives
+
 - Mamdani FIS theory: Fuzzification → Rule Evaluation → Aggregation → Defuzzification
 - Membership functions: triangular `trimf(x; a,b,c)` and trapezoidal `trapmf(x; a,b,c,d)`
 - Min-AND conjunction, max aggregation, centroid defuzzification
 - Pure NumPy implementation (no heavy dependencies)
 
-### 8.2 Input Membership Functions (from Paper Section 4.3.1)
+### 8.2 Input Membership Functions (Paper Section 4.3.1)
 
-#### Invocation Intensity R ∈ [0, 1]
-| Term | Type | Parameters |
-|:---|:---|:---|
-| LOW | Trapezoidal | (0, 0, 0.15, 0.35) |
-| MEDIUM | Triangular | (0.2, 0.5, 0.8) |
-| HIGH | Trapezoidal | (0.65, 0.85, 1.0, 1.0) |
+#### Invocation Intensity `R ∈ [0, 1]`
 
-#### Traffic Trend T ∈ [-1, 1]
 | Term | Type | Parameters |
-|:---|:---|:---|
-| FALLING | Trapezoidal | (-1, -1, -0.5, -0.1) |
-| STABLE | Triangular | (-0.2, 0, 0.2) |
-| RISING | Triangular | (0.1, 0.4, 0.7) |
-| SURGING | Trapezoidal | (0.5, 0.8, 1, 1) |
+|:---|:---:|:---|
+| LOW | Trapezoidal | `(0, 0, 0.15, 0.35)` |
+| MEDIUM | Triangular | `(0.2, 0.5, 0.8)` |
+| HIGH | Trapezoidal | `(0.65, 0.85, 1.0, 1.0)` |
 
-#### Cold-Start Pressure C ∈ [0, 1]
-| Term | Type | Parameters |
-|:---|:---|:---|
-| LOW | Trapezoidal | (0, 0, 0.1, 0.3) |
-| MEDIUM | Triangular | (0.15, 0.4, 0.65) |
-| HIGH | Trapezoidal | (0.5, 0.7, 1, 1) |
+#### Traffic Trend `T ∈ [-1, 1]`
 
-#### Resource Pressure M ∈ [0, 1]
 | Term | Type | Parameters |
-|:---|:---|:---|
-| LOW | Trapezoidal | (0, 0, 0.3, 0.5) |
-| MEDIUM | Triangular | (0.35, 0.55, 0.75) |
-| HIGH | Trapezoidal | (0.65, 0.8, 1, 1) |
+|:---|:---:|:---|
+| FALLING | Trapezoidal | `(-1, -1, -0.5, -0.1)` |
+| STABLE | Triangular | `(-0.2, 0, 0.2)` |
+| RISING | Triangular | `(0.1, 0.4, 0.7)` |
+| SURGING | Trapezoidal | `(0.5, 0.8, 1, 1)` |
 
-### 8.3 Output Membership Functions — Desired Warm Capacity P ∈ [0, 1]
+#### Cold-Start Pressure `C ∈ [0, 1]`
+
 | Term | Type | Parameters |
-|:---|:---|:---|
-| VERY_LOW | Trapezoidal | (0, 0, 0.05, 0.2) |
-| LOW | Triangular | (0.1, 0.25, 0.4) |
-| MEDIUM | Triangular | (0.3, 0.5, 0.7) |
-| HIGH | Triangular | (0.6, 0.75, 0.9) |
-| VERY_HIGH | Trapezoidal | (0.8, 0.95, 1, 1) |
+|:---|:---:|:---|
+| LOW | Trapezoidal | `(0, 0, 0.1, 0.3)` |
+| MEDIUM | Triangular | `(0.15, 0.4, 0.65)` |
+| HIGH | Trapezoidal | `(0.5, 0.7, 1, 1)` |
+
+#### Resource Pressure `M ∈ [0, 1]`
+
+| Term | Type | Parameters |
+|:---|:---:|:---|
+| LOW | Trapezoidal | `(0, 0, 0.3, 0.5)` |
+| MEDIUM | Triangular | `(0.35, 0.55, 0.75)` |
+| HIGH | Trapezoidal | `(0.65, 0.8, 1, 1)` |
+
+### 8.3 Output Membership Functions — Desired Warm Capacity `P ∈ [0, 1]`
+
+| Term | Type | Parameters |
+|:---|:---:|:---|
+| VERY_LOW | Trapezoidal | `(0, 0, 0.05, 0.2)` |
+| LOW | Triangular | `(0.1, 0.25, 0.4)` |
+| MEDIUM | Triangular | `(0.3, 0.5, 0.7)` |
+| HIGH | Triangular | `(0.6, 0.75, 0.9)` |
+| VERY_HIGH | Trapezoidal | `(0.8, 0.95, 1, 1)` |
 
 ### 8.4 Complete Rule Base — 27 Rules (Table 2)
 
-**"—" = don't-care (rule fires regardless of that input's value, membership = 1.0)**
+> `—` = don't-care (rule fires regardless of that input's value, membership = 1.0)
 
 | # | Invocation (R) | Trend (T) | Cold-Start (C) | Memory (M) | → Output (P) |
-|:---|:---|:---|:---|:---|:---|
+|:---:|:---|:---|:---|:---|:---|
 | 1 | LOW | FALLING | LOW | — | VERY_LOW |
 | 2 | LOW | STABLE | LOW | — | VERY_LOW |
 | 3 | LOW | STABLE | MEDIUM | LOW | LOW |
@@ -91,10 +100,10 @@
 
 ### 8.5 Design Principles Encoded in Rules
 
-1. **Load-proportional scaling**: LOW invocation → VERY_LOW/LOW capacity; HIGH → HIGH/VERY_HIGH
-2. **Trend-anticipatory**: RISING/SURGING trends trigger proactive scaling (Rules 5–8, 15–18, 24–26)
-3. **Cold-start feedback**: HIGH cold-start pressure increases capacity even at moderate load (Rules 14, 17, 23)
-4. **Resource-constrained moderation**: HIGH memory pressure dampens recommendations (Rules 9, 12, 19, 25, 27)
+1. **Load-proportional scaling** — LOW invocation → VERY_LOW/LOW capacity; HIGH → HIGH/VERY_HIGH
+2. **Trend-anticipatory** — RISING/SURGING trends trigger proactive scaling (Rules 5–8, 15–18, 24–26)
+3. **Cold-start feedback** — HIGH cold-start pressure increases capacity even at moderate load (Rules 14, 17, 23)
+4. **Resource-constrained moderation** — HIGH memory pressure dampens recommendations (Rules 9, 12, 19, 25, 27)
 
 ### 8.6 Implementation Workflow
 
@@ -137,15 +146,17 @@ def test_output_bounded():
     engine = FuzzyEngine("configs/fuzzy_rules.json")
     import numpy as np
     for _ in range(1000):
-        R, T, C, M = np.random.rand(), np.random.rand()*2-1, np.random.rand(), np.random.rand()
+        R, T = np.random.rand(), np.random.rand() * 2 - 1
+        C, M = np.random.rand(), np.random.rand()
         p = engine.evaluate(R=R, T=T, C=C, M=M)
         assert 0.0 <= p <= 1.0
 ```
 
 ### 8.8 Verification
+
 - [ ] All 27 rules fire correctly under appropriate input combinations
 - [ ] Output is always bounded to [0, 1]
-- [ ] Don't-care conditions (—) correctly evaluate to membership = 1.0
+- [ ] Don't-care conditions (`—`) correctly evaluate to membership = 1.0
 - [ ] No divide-by-zero during defuzzification
 - [ ] Edge cases: all inputs at 0.0, all at 1.0, mixed extremes
 
@@ -154,9 +165,10 @@ def test_output_bounded():
 ## Phase 9 — Dependency Granularity Tree
 
 ### 9.1 Learning Objectives
+
 - DAG data structures in Python
 - Dependency decomposition: Runtime → Shared Libraries → Unique Code
-- Max-projection: P_k^tree = max_{f_i ∈ F(v_k)} P_i
+- Max-projection: `P_k^tree = max{ P_i : f_i ∈ F(v_k) }`
 - Jaccard similarity clustering
 
 ### 9.2 The Benchmark Granularity Tree (Paper Section 5.3)
@@ -184,28 +196,30 @@ Root
     └── F12-specific: firebase-admin (15 MB)
 ```
 
-**Total granularity-tree nodes: K = 20**
+> **Total granularity-tree nodes: K = 20**
 
 ### 9.3 Node Types
 
 | Layer | Description | Example | Count |
-|:---|:---|:---|:---|
-| Layer 0 | Runtime | Python 3.11, Node.js 20 | 2 |
-| Layer 1 | Shared library bundles | numpy, Pillow bundle, pandas bundle | 3 |
-| Layer 2 | Function-specific | F1-code, F2-code, ..., F12-code | 12 |
+|:---:|:---|:---|:---:|
+| 0 | Runtime | Python 3.11, Node.js 20 | 2 |
+| 1 | Shared library bundles | numpy, Pillow bundle, pandas bundle | 3 |
+| 2 | Function-specific | F1-code, F2-code, ..., F12-code | 12 |
 | Internal | Non-leaf groupings | Root, runtime containers | 3 |
 
 ### 9.4 Max-Projection Algorithm
 
-For each tree node v_k, compute:
+For each tree node `v_k`, compute:
+
 ```
 P_k^tree = max { P_i : f_i depends on v_k }
 ```
 
-**Example:** If Fuzzy recommends P_F3=0.6, P_F4=0.8, P_F5=0.3, then:
-- Pillow bundle node: max(0.6, 0.8, 0.3) = 0.8
-- numpy node: max(0.6, 0.8, 0.3, ...) (all numpy users)
-- Python runtime: max of ALL Python function recommendations
+**Example:** If Fuzzy recommends `P_F3=0.6`, `P_F4=0.8`, `P_F5=0.3`, then:
+
+- **Pillow bundle node:** `max(0.6, 0.8, 0.3) = 0.8`
+- **numpy node:** `max(0.6, 0.8, 0.3, ...)` (all numpy users)
+- **Python runtime:** max of ALL Python function recommendations
 
 ### 9.5 Implementation: `configs/dependencies.json`
 
@@ -214,12 +228,10 @@ P_k^tree = max { P_i : f_i depends on v_k }
     "nodes": [
         {"id": "python_311", "name": "Python 3.11 Runtime", "layer": 0, "memory_mb": 80, "init_time_ms": 200, "parent": null},
         {"id": "nodejs_20", "name": "Node.js 20 Runtime", "layer": 0, "memory_mb": 40, "init_time_ms": 100, "parent": null},
-        {"id": "numpy", "name": "numpy", "layer": 1, "memory_mb": 25, "init_time_ms": 80, "parent": "python_311"},
-        ...
+        {"id": "numpy", "name": "numpy", "layer": 1, "memory_mb": 25, "init_time_ms": 80, "parent": "python_311"}
     ],
     "functions": [
-        {"id": "f01", "name": "helloWorld", "leaf_node": "f01_leaf", "dependency_path": ["nodejs_20", "f01_leaf"]},
-        ...
+        {"id": "f01", "name": "helloWorld", "leaf_node": "f01_leaf", "dependency_path": ["nodejs_20", "f01_leaf"]}
     ]
 }
 ```
@@ -227,6 +239,7 @@ P_k^tree = max { P_i : f_i depends on v_k }
 ### 9.6 Implementation: `controller/granularity/tree.py`
 
 Core class interface:
+
 ```python
 class GranularityTree:
     def __init__(self, config_path: str): ...
@@ -263,6 +276,7 @@ def test_all_functions_have_paths():
 ```
 
 ### 9.8 Verification
+
 - [ ] Tree has K=20 nodes (matching paper)
 - [ ] Every function maps to a valid leaf node
 - [ ] Max-projection propagates correctly up the tree
@@ -273,11 +287,12 @@ def test_all_functions_have_paths():
 
 ## Phase 10 — Constrained Discrete PSO Optimizer
 
-> **Assigned to: Harshit Arya**
+> **Owner:** Harshit Arya
 
 ### 10.1 Learning Objectives
+
 - PSO velocity/position update equations
-- Inertia weight decay (ω: 0.7 → 0.4)
+- Inertia weight decay (`ω`: 0.7 → 0.4)
 - Discrete (integer) search space with rounding + clamping
 - Constraint handling via quadratic penalty function
 - Intelligent swarm initialization from fuzzy prior
@@ -285,31 +300,38 @@ def test_all_functions_have_paths():
 ### 10.2 PSO Formulation
 
 #### Particle Representation
+
 ```
 x^(p) = [x_1^(p), x_2^(p), ..., x_K^(p)] ∈ ℤ≥0^K
 ```
-Each x_k = number of warm instances for granularity-tree node v_k.
+
+Each `x_k` = number of warm instances for granularity-tree node `v_k`.
 
 #### Fitness Function
+
 ```
 J(x) = w_L·L̄(x) + w_C·C̄(x) + w_M·M̂(x) + w_S·S̄(x)
-      + ρ · max(0, Σ m_vk·x_k − M_budget)²
+     + ρ · max(0, Σ m_vk·x_k − M_budget)²
 ```
 
 | Component | Weight | Description |
-|:---|:---|:---|
-| L̄(x) | w_L = 0.35 | Normalized average latency |
-| C̄(x) | w_C = 0.25 | Normalized cold-start rate |
-| M̂(x) | w_M = 0.25 | Normalized idle memory |
-| S̄(x) | w_S = 0.15 | Normalized SLA violation rate |
-| Penalty | ρ = 100 | Quadratic memory budget violation |
+|:---|:---:|:---|
+| `L̄(x)` | `w_L = 0.35` | Normalized average latency |
+| `C̄(x)` | `w_C = 0.25` | Normalized cold-start rate |
+| `M̂(x)` | `w_M = 0.25` | Normalized idle memory |
+| `S̄(x)` | `w_S = 0.15` | Normalized SLA violation rate |
+| Penalty | `ρ = 100` | Quadratic memory budget violation |
 
 #### Velocity Update
+
 ```
-v_k^(p)(t+1) = ω·v_k^(p)(t) + c₁·r₁·(pbest_k^(p) − x_k^(p)(t)) + c₂·r₂·(gbest_k − x_k^(p)(t))
+v_k^(p)(t+1) = ω·v_k^(p)(t)
+             + c₁·r₁·(pbest_k^(p) − x_k^(p)(t))
+             + c₂·r₂·(gbest_k − x_k^(p)(t))
 ```
 
 #### Position Update (with integer discretization)
+
 ```
 x_k^(p)(t+1) = round(x_k^(p)(t) + v_k^(p)(t+1))
 x_k^(p)(t+1) = clamp(x_k^(p)(t+1), x_k_min, x_k_max)
@@ -318,29 +340,30 @@ x_k^(p)(t+1) = clamp(x_k^(p)(t+1), x_k_min, x_k_max)
 ### 10.3 PSO Hyperparameters
 
 | Parameter | Symbol | Value |
-|:---|:---|:---|
-| Swarm size | S | 30 |
-| Max iterations | I_max | 50 |
-| Inertia (start) | ω_start | 0.7 |
-| Inertia (end) | ω_end | 0.4 |
-| Cognitive coeff. | c₁ | 1.5 |
-| Social coeff. | c₂ | 1.5 |
-| Penalty coeff. | ρ | 100 |
+|:---|:---:|:---:|
+| Swarm size | `S` | 30 |
+| Max iterations | `I_max` | 50 |
+| Inertia (start) | `ω_start` | 0.7 |
+| Inertia (end) | `ω_end` | 0.4 |
+| Cognitive coeff. | `c₁` | 1.5 |
+| Social coeff. | `c₂` | 1.5 |
+| Penalty coeff. | `ρ` | 100 |
 
 ### 10.4 Intelligent Initialization
 
 | Particle | Initialization |
-|:---|:---|
-| 1 | Fuzzy projected recommendations P^tree |
-| 2 | Current active allocation x^current |
-| 3 | 0.5 × P^tree (conservative) |
-| 4 | 0.75 × P^tree (moderate) |
-| 5 | 1.25 × P^tree (aggressive) |
-| 6–30 | Gaussian perturbation around P^tree |
+|:---:|:---|
+| 1 | Fuzzy projected recommendations `P^tree` |
+| 2 | Current active allocation `x^current` |
+| 3 | `0.5 × P^tree` (conservative) |
+| 4 | `0.75 × P^tree` (moderate) |
+| 5 | `1.25 × P^tree` (aggressive) |
+| 6–30 | Gaussian perturbation around `P^tree` |
 
 ### 10.5 Implementation: `controller/pso/pso_optimizer.py`
 
 Key methods:
+
 ```python
 class DiscreteConstrainedPSO:
     def __init__(self, swarm_size, max_iter, memory_budget, weights, ...): ...
@@ -378,6 +401,7 @@ def test_integer_positions():
 ```
 
 ### 10.7 Verification
+
 - [ ] PSO converges within 50 iterations (fitness monotonically improves for gbest)
 - [ ] All final positions are non-negative integers
 - [ ] Memory budget constraint satisfied in final solution
@@ -386,12 +410,12 @@ def test_integer_positions():
 
 ---
 
-## Handoff to Stage 4
+## ➡️ Handoff to Stage 4
 
 Once verified:
-1. Fuzzy engine passes all 27-rule tests
-2. Granularity tree correctly projects across K=20 nodes
-3. PSO converges within budget constraints
+
+1. ✅ Fuzzy engine passes all 27-rule tests
+2. ✅ Granularity tree correctly projects across K=20 nodes
+3. ✅ PSO converges within budget constraints
 
 → **Harshit Arya** begins Phase 11 (integration of all components into dual-timescale controller).
-]]>
