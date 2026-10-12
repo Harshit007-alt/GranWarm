@@ -1,302 +1,314 @@
-# Current architecture
+# Architecture gap analysis and roadmap
 
 > **Last updated:** 2026-10-11 — reflects the P0 contract, safety,
-> telemetry, and operating-mode work. See the
-> [gap analysis and roadmap](gap-analysis-and-roadmap.md) for what
-> remains.
+> telemetry, and operating-mode work.
 
-This document describes what the repository implements today. It is
-deliberately separate from the target design in the root
-[README](../../README.md).
+This document explains how to move from the implementation described in
+[Current architecture](current-architecture.md) to the target design in
+the root [README](../../README.md).
 
-## Current system boundary
+## Gap summary
 
-The repository has two partially related execution paths:
-
-1. An offline simulator with baselines and an experiment matrix.
-2. A live controller that reads Prometheus and patches Knative services.
-
-The offline path is the more complete and reproducible path. The live
-path is an integration prototype built on the same controller
-components. As of this revision, the live controller can also run
-fully offline in `dry_run` / `simulation` / `replay` modes, which makes
-the pipeline testable without a cluster.
-
-## Current operating modes
-
-The controller supports five explicit modes via `--mode`. The default
-is `dry_run`.
-
-| Mode | Purpose | Prometheus required | Mocks allowed | K8s writes |
+| Area | Current state | Target state | Priority | Status |
 | --- | --- | --- | --- | --- |
-| `simulation` | Offline, synthetic telemetry | No | Yes | No |
-| `replay` | Deterministic replay of a recorded trace | No | Yes | No |
-| `dry_run` | Full pipeline, no Kubernetes writes | No | Yes (warned) | No |
-| `shadow` | Real telemetry, decisions logged only | Yes | No | No |
-| `live` | Full actuation | Yes | No | Yes |
+| Contracts | Dictionaries passed between modules | Shared typed telemetry, allocation, and decision contracts | P0 | **Done** |
+| Memory safety | PSO penalty plus fast proportional scaling | Hard feasibility and repair before actuation | P0 | **Done** |
+| Telemetry | Queries plus default mock fallback | Validated schema, freshness, explicit failure | P0 | **Done** (cold-start query still to validate) |
+| Operating modes | Live and dry-run flags | Simulation, replay, shadow, dry-run, and live modes | P1 | **Done** |
+| Dependency layers | Simulated cache-like nodes | Real, explicitly managed shared warm-layer resources | P0 | Not started |
+| Optimization | Mostly analytic surrogates | Objective grounded in measured/simulated metrics | P1 | Not started |
+| Actuation | Function-level `min-scale` patching | Layer and function actuation with reconciliation | P1 | Not started |
+| Reliability | Logged failures | Retry, backoff, idempotency, desired-state reconciliation | P1 | Not started |
+| Evaluation | Offline matrix and selected artifacts | Reproducible offline/live comparison with controller metrics | P2 | Not started |
+| Delivery | Tests but no complete release workflow | CI, pinned dependencies, manifests, and experiment metadata | P2 | Not started |
 
-At startup, `shadow` and `live` validate the Prometheus schema and
-refuse to run if Prometheus is unreachable. `dry_run` probes once and,
-if Prometheus is unreachable, switches to a pure-mock fast path with no
-further HTTP calls.
+## Execution roadmap
 
-## Current workflow
+### Phase 0: Freeze the contracts
 
-```
-Offline simulator:
-workload profile
-  -> simulator telemetry
-  -> selected baseline
-  -> function/tree prewarm targets
-  -> container simulation
-  -> CSV metrics
+**Goal:** make every execution path use the same data model.
 
-Live / dry-run / shadow controller:
-Prometheus (or probe + mock fallback in offline modes)
-  -> PrometheusMonitor.fetch_snapshot()
-  -> TelemetrySnapshot (typed, validated for freshness)
-  -> FuzzyEngine.evaluate() per function
-  -> GranularityTree.project_capacities()
-  -> bounded-delta fast loop OR DAG-aware DiscreteConstrainedPSO
-  -> AllocationRequest
-  -> FeasibilityService.process()           <-- hard safety gate
-  -> AllocationDecision
-  -> audit log (results/audit/YYYY-MM-DD.jsonl)
-  -> KnativeScaler.apply_allocation()       (dry_run / shadow: no-op)
-```
+**Status: COMPLETE.** Implemented in
+[controller/contracts/](../../controller/contracts/).
 
-## Current components
+Implemented shared models for:
 
-### Controller orchestration
+- `TelemetrySnapshot`
+- `FunctionTelemetry`
+- `FunctionSpec`
+- `LayerSpec`
+- `AllocationRequest`
+- `AllocationDecision`
 
-[controller/main.py](../../controller/main.py) runs a dual-timescale
-loop:
+Additional models planned by the target design (`ObservedMetrics`,
+`ActuationResult`) will land with Phase 5. Validation rules exist for
+domains, timestamps, service names, allocation bounds, and freshness.
 
-- **Fast loop (default 10s).** Fetch a telemetry snapshot, run fuzzy
-  inference per function, project to DAG nodes, move the current
-  allocation at most ±1 per node per cycle toward the fuzzy target
-  (`fuzzy+delta`), then pass through the safety gate.
-- **Slow loop (default 60s).** Run DAG-aware constrained PSO, pass
-  through the safety gate.
-- **Every cycle.** Audit the decision. In `live` mode, call the
-  actuator.
+**Acceptance criteria**
 
-The controller has configurable fast/slow intervals, memory budget,
-Prometheus URL, operating mode, audit directory, and stale-telemetry
-policy.
+- ✅ simulator and live controller accept the same telemetry shape;
+- ✅ invalid values fail with an explicit error;
+- ✅ serialization is stable for replay and audit logs;
+- ✅ tests cover missing, stale, and out-of-range fields.
 
-### Contracts
+### Phase 1: Make dependency semantics executable
 
-[controller/contracts/](../../controller/contracts/) defines the shared
-typed data model used by the simulator, the controller, the safety
-gate, and (in the future) the actuator:
+**Goal:** close the gap between the simulated dependency graph and the
+live runtime.
 
-- `TelemetrySnapshot` / `FunctionTelemetry` — one cycle of telemetry,
-  with `source` provenance (`prometheus`, `mock`, `replay`,
-  `simulator`).
-- `AllocationRequest` / `AllocationDecision` — proposed and validated
-  allocations, including `node_capacities` and `function_capacities`.
-- `FunctionSpec` / `LayerSpec` — function and layer metadata (currently
-  used for validation and future layer materialization).
-- `validation.py` — domain checks, freshness checks, and the
-  `STALENESS_THRESHOLD_SEC` constant.
+**Status: NOT STARTED.** The DAG is parsed, projections are enforced,
+and non-allocatable nodes are excluded, but shared layers are still
+simulated; no Kubernetes resources are created for them.
 
-Serialization is stable (JSON) so audit and replay records are
-reproducible.
+First decide the implementation model. The recommended first target is
+a layer-aware runtime contract in which each function declares the
+reusable layers it needs, while a node-level manager tracks warm
+capacity and memory for those layers.
 
-### Safety gate
+Then implement:
 
-[controller/safety/feasibility.py](../../controller/safety/feasibility.py)
-runs after BOTH the fuzzy fast path and the PSO slow path. It:
+1. layer ownership and lifecycle;
+2. shared memory accounting;
+3. layer startup-time savings;
+4. dependency-aware capacity mapping;
+5. observed layer state; and
+6. an actuator interface for layer resources.
 
-1. validates node bounds, dependency constraints (child ≤ parent), and
-   total memory against the configured budget;
-2. repairs infeasible requests (child clamps, then proportional scale
-   down while respecting minimum bounds);
-3. rejects requests that cannot be repaired, with an explicit reason;
-4. returns a typed `AllocationDecision`.
+Do not claim live dependency sharing until the runtime can observe and
+manage those resources.
 
-PSO penalties remain as search guidance but are NOT the safety
-mechanism. Only the feasibility service can authorize an allocation for
-actuation.
+**Acceptance criteria**
 
-### Audit trail
+- one shared runtime layer can serve multiple functions;
+- memory is counted once for a shared layer;
+- cold-start savings match between simulator and live model;
+- a layer allocation can be reconciled independently of leaf allocation.
 
-Every decision is appended as one JSON line to
-`results/audit/YYYY-MM-DD.jsonl` with fields including:
+### Phase 2: Enforce hard budget safety
 
-- `decision_id`, `cycle_id`, `source` (`pso`, `fuzzy+delta`)
-- `telemetry_source` (`prometheus`, `mock`, `replay`, `simulator`)
-- `mode` (`dry_run`, `shadow`, `live`, etc.)
-- `estimated_memory_mb`, `within_budget`, `rejected_reason`,
-  `repair_notes`
-- `node_capacities`, `function_capacities`
-- fast-loop extras: `fuzzy_prior`, `fuzzy_target`,
-  `delta_from_previous`
+**Goal:** guarantee that no emitted decision exceeds the memory budget.
 
-### Telemetry
+**Status: COMPLETE.** Implemented in
+[controller/safety/feasibility.py](../../controller/safety/feasibility.py).
 
-[controller/monitor/prometheus_client.py](../../controller/monitor/prometheus_client.py)
-queries Prometheus for invocation rate, a cold-start-related signal,
-and memory pressure, then normalizes them into the fuzzy controller
-domains and returns a typed `TelemetrySnapshot`.
-
-Current behavior:
-
-- Mock fallback is **opt-in** (`enable_mock_fallback=False` by
-  default).
-- `probe()` performs a one-shot reachability check with a 0.5s connect
-  timeout.
-- If the probe fails and the current mode permits mocks,
-  `force_mock_only()` disables HTTP entirely so cycles complete in
-  ~10s instead of blocking on a dead Prometheus.
-- Missing required signals in `shadow` / `live` raise `TelemetryError`
-  — there is no silent fallback.
-- Staleness is validated per snapshot against
-  `STALENESS_THRESHOLD_SEC`; `mock`, `replay`, and `simulator` sources
-  are exempt because they have no real-time contract.
-
-### Fuzzy inference
-
-[controller/fuzzy/fuzzy_engine.py](../../controller/fuzzy/fuzzy_engine.py)
-implements a 27-rule Mamdani system with triangular and trapezoidal
-membership functions, min-AND implication, max aggregation, and
-centroid defuzzification. Its output is a continuous value in `[0, 1]`,
-which the controller scales to an integer instance count via
-`FUZZY_CAPACITY_SCALE` (default 8.0).
-
-### Dependency graph
-
-[controller/granularity/tree.py](../../controller/granularity/tree.py)
-loads the graph from `configs/dependencies.json`. Nodes marked
-`"allocatable": false` (for example, the structural `root`) are parsed
-for traversal but excluded from the optimization vector and from memory
-accounting.
-
-Key attributes:
-
-- `node_ids` — allocatable nodes only (currently 19).
-- `all_node_ids` — every node including structural ones (currently 20).
-- `parent_map` — `{node_id: parent_id or None}`.
-- `node_index` — position of each allocatable node in the PSO vector.
-
-The projection is still:
+The service exposes:
 
 ```
-projected_node_capacity(node)
-  = max(recommendation(function)
-        for function depending on node)
+validate(allocation)
+repair(allocation)
+reject_or_report(allocation)
 ```
 
-The mapping back to functions uses each function's `leaf_node`.
+It accounts for shared layers, function capacity, and reserved memory.
+The penalty term inside PSO is retained for optimization guidance, but
+it is no longer the only safety mechanism.
 
-### PSO
+**Acceptance criteria**
 
-[controller/pso/pso_optimizer.py](../../controller/pso/pso_optimizer.py)
-optimizes an integer allocation vector with configurable swarm size,
-iterations, bounds, and memory budget.
+- ✅ every applied allocation satisfies the budget;
+- ✅ infeasible PSO candidates are repaired or rejected;
+- ✅ fast-loop decisions also pass the same validator;
+- ✅ tests cover zero budget, oversized nodes, and rounding overflow.
 
-The PSO is **DAG-aware**. When constructed with `node_ids` and
-`parent_map`, it clamps each child's capacity to its parent after every
-position update (and at initialization). This makes the search space
-feasible-by-construction, so the downstream safety gate rarely has to
-repair PSO output.
+### Phase 3: Make telemetry production-safe
 
-The objective still uses analytic latency, cold-start, memory, and SLA
-surrogates. Grounding the objective in measured metrics is
-[Phase 4](gap-analysis-and-roadmap.md#phase-4-connect-optimization-to-observations).
+**Goal:** ensure decisions are based on real and correctly interpreted
+signals.
 
-### Actuation
+**Status: MOSTLY COMPLETE.** Mock fallback is opt-in, freshness is
+validated, and `mock` / `replay` / `simulator` sources are exempt from
+the staleness check. A reachability `probe()` and a pure-mock fast path
+eliminate the pathological 144-second cycle observed on Windows when
+Prometheus was unreachable.
 
-[controller/allocator/knative_scaler.py](../../controller/allocator/knative_scaler.py)
-uses the Kubernetes custom-object API to patch Knative Service
-`autoscaling.knative.dev/min-scale` annotations.
+Remaining work:
 
-Current behavior:
+- validate the cold-start PromQL query against the deployed Knative
+  metric schema;
+- add recorded Prometheus fixtures and an integration test against the
+  selected Knative version.
 
-- scale-up is applied immediately;
-- scale-down is applied only beyond an epsilon deadband;
-- Kubernetes initialization failures switch to dry-run behavior;
-- patch failures are logged;
-- every call receives the full function → target map from the validated
-  `AllocationDecision`.
+**Acceptance criteria**
 
-The actuator is not yet idempotent, does not retry transient failures,
-and does not reconcile after controller restart. See
-[Phase 5](gap-analysis-and-roadmap.md#phase-5-build-a-reliable-actuator).
+- ✅ live mode cannot silently continue on synthetic values;
+- ⏳ every signal has a documented query, unit, and normalization
+  (partially done — cold-start query still to be confirmed);
+- ✅ stale data is rejected or clearly marked;
+- ⏳ telemetry snapshots are replayable (contract supports it; loader
+  not yet implemented).
 
-The actuator receives function service targets. It does not currently
-create or manage independent shared runtime / library warm-layer
-resources.
+### Phase 4: Connect optimization to observations
 
-### Simulator
+**Goal:** replace disconnected surrogate optimization with a measured
+closed-loop objective.
 
-[simulator/env.py](../../simulator/env.py) models:
+**Status: NOT STARTED.**
 
-- cold, warm, busy, and reclaimed containers;
-- function-level minimum warm targets;
-- tree prewarmed capacities;
-- dependency-based cold-start savings;
-- memory use and idle memory;
-- latency, cold-start, and SLA records.
-
-[simulator/run_sim.py](../../simulator/run_sim.py) generates
-non-homogeneous Poisson arrivals every 500 ms and evaluates one of six
-baseline policies.
-
-### Workloads and experiments
-
-[workload/profiles.py](../../workload/profiles.py) defines W1–W5. The
-experiment runner executes workloads, baselines, and seeds, then writes
-raw traces and a summary CSV. Plotting and table generation are handled
-by `scripts/plot_results.py`.
-
-## Current strengths
-
-- All offline execution paths work without a live cluster; a dead
-  Prometheus does not block or slow the fast loop.
-- Every allocation passes a hard feasibility gate before actuation.
-- Telemetry provenance is explicit and audited; production modes cannot
-  silently fall back to synthetic values.
-- PSO searches the DAG-feasible subspace directly.
-- The fast loop applies bounded deltas, giving natural hysteresis
-  without a dedicated state machine.
-- 21 unit tests cover contracts, safety, tree projection, PSO,
-  monitoring, and simulator behavior.
-- Five operating modes isolate simulation from production and make
-  shadow experiments possible.
-
-## Current limitations
-
-- Shared dependency nodes are still simulated; they are not
-  materialized as live Kubernetes resources (Phase 1).
-- The actuator controls function-level Knative services only; it is not
-  yet idempotent, retrying, or reconciling (Phase 5).
-- PSO fitness is primarily surrogate-based; it does not yet consume a
-  rolling metrics store (Phase 4).
-- The cold-start PromQL query requires validation against the deployed
-  Knative metric schema (Phase 3, partial).
-- No CI pipeline; tests must be run locally (Phase 7).
-- The simulator and live controller share contract shapes but have not
-  yet been cross-validated on one trace (Phase 6).
-- `simulation` and `replay` are currently aliases for `dry_run` with
-  mocks; they will diverge once a generated-telemetry adapter and a
-  recorded-trace loader exist.
-
-## Current verification
-
-The repository has tests for fuzzy inference, monitoring, tree
-projection, PSO, safety, contracts, and simulator behavior. The
-expected local command is:
+Create a rolling metrics store keyed by function, layer, and time
+window. Compute objective terms from observed or simulator-generated
+values:
 
 ```
-python -m pytest tests -q
+J(x) =
+  latency_cost(x)
+  + cold_start_cost(x)
+  + idle_memory_cost(x)
+  + sla_cost(x)
 ```
 
-A minimal offline smoke run of the controller is:
+Keep normalization and weights in configuration. Record the objective
+breakdown for every PSO decision.
+
+**Acceptance criteria**
+
+- PSO can optimize against a replayed metric window;
+- objective terms appear in decision logs;
+- identical input trace and seed produce identical output;
+- tests prove that changing measured latency can change the selected
+  policy.
+
+### Phase 5: Build a reliable actuator
+
+**Goal:** make Kubernetes changes safe and convergent.
+
+**Status: NOT STARTED.** The current `KnativeScaler` patches
+`min-scale` immediately, applies a deadband for scale-down, and logs
+failures. It does not retry, does not reconcile, and does not persist a
+desired state.
+
+Add:
+
+- desired-state records;
+- idempotent patch generation;
+- retry with bounded exponential backoff;
+- conflict handling;
+- observed-state refresh;
+- reconciliation after controller restart;
+- rate limits and change budgets;
+- structured actuation results.
+
+The actuator should support both shared-layer resources and function
+services. It should expose a read-only plan for `shadow` and `dry_run`
+modes.
+
+**Acceptance criteria**
+
+- repeated application of the same decision produces no unnecessary
+  patch;
+- transient Kubernetes failures are retried;
+- permanent failures are surfaced to the controller;
+- restart recovery converges to the desired allocation;
+- every change has a decision ID and outcome.
+
+### Phase 6: Add operating modes and end-to-end validation
+
+**Goal:** validate the architecture without risking the live cluster.
+
+**Status: PARTIALLY COMPLETE.**
+
+Implemented modes:
+
+1. ✅ **Simulation:** generated telemetry (currently aliased to mocks).
+2. ✅ **Replay:** recorded telemetry (loader not yet implemented; mode
+   flag exists).
+3. ✅ **Shadow:** real telemetry, no actuation.
+4. ✅ **Dry run:** validated plan, no Kubernetes writes.
+5. ✅ **Live:** actuation path exists; retries and reconciliation are
+   pending Phase 5.
+
+Remaining work: complete the simulation and replay adapters, then run
+the progression below.
 
 ```
-python -m controller.main --mode dry_run --cycles 3
+unit tests
+  -> simulator smoke test
+  -> offline matrix
+  -> telemetry fixture replay
+  -> shadow controller
+  -> dry-run cluster
+  -> one live W3 trial
+  -> complete live workload matrix
 ```
 
-Each cycle writes an audit record to `results/audit/YYYY-MM-DD.jsonl`.
+**Acceptance criteria**
+
+- ⏳ offline and replay modes are deterministic (offline is; replay
+  loader pending);
+- ✅ shadow decisions are inspectable (audit log);
+- ⏳ dry-run plans match live patch plans (depends on Phase 5);
+- ⏳ one live trial records telemetry, decisions, patches, and outcomes
+  together.
+
+### Phase 7: Reproducible research release
+
+**Goal:** make the final evaluation defensible and repeatable.
+
+**Status: NOT STARTED.**
+
+Add:
+
+- pinned dependencies;
+- CI for tests and smoke runs;
+- experiment manifest files;
+- commit and environment metadata;
+- clean output directories per run;
+- confidence intervals and effect sizes;
+- controller overhead measurements;
+- a limitations section covering simulator assumptions and live
+  constraints.
+
+**Acceptance criteria**
+
+- a new machine can reproduce the offline matrix;
+- every result maps to a commit, configuration, seed, and environment;
+- figures and tables are generated from raw results;
+- live and offline results are clearly distinguished.
+
+## Recommended immediate sequence
+
+Completed:
+
+1. ✅ Shared typed contracts.
+2. ✅ Hard allocation validator and tests.
+3. ✅ Opt-in mock telemetry in live mode.
+4. ✅ Five operating modes.
+
+Next, in order:
+
+5. **Phase 5 (P1):** rewrite
+   [controller/allocator/knative_scaler.py](../../controller/allocator/knative_scaler.py)
+   with idempotency, retries, reconciliation, and a persistent
+   desired-state store.
+6. **Phase 4 (P1):** build the rolling metrics store and wire it into
+   the PSO objective.
+7. **Phase 3 remainder:** validate the cold-start PromQL query against
+   the deployed Knative metric schema.
+8. **Phase 1 (P0):** define and implement the shared-layer runtime
+   contract (sidecars, warm holders, or image prefetch).
+9. **Phase 6 remainder:** run a W3 shadow experiment on a real KinD
+   cluster, then one dry-run trial and one live trial.
+
+The key milestone is not simply “the controller runs.” The target is
+reached when the following statement is true:
+
+> The simulator, telemetry adapter, optimizer, dependency graph, safety
+> layer, and Kubernetes actuator describe and enforce the same
+> allocation semantics.
+
+## Completed work (as of this revision)
+
+- `controller/contracts/` — typed telemetry, allocation, and decision
+  models with validation.
+- `controller/safety/feasibility.py` — hard feasibility gate; runs on
+  both fuzzy and PSO paths.
+- `controller/monitor/prometheus_client.py` — `probe()`,
+  `force_mock_only()`, no silent fallback in `shadow` / `live`.
+- `controller/main.py` — five operating modes, JSONL audit trail,
+  bounded-delta fast loop, telemetry provenance tagging.
+- `controller/granularity/tree.py` — non-allocatable node filtering,
+  `parent_map` and `node_index` exposure.
+- `controller/pso/pso_optimizer.py` — DAG-aware projection of particles
+  onto the feasible subspace.
+- `configs/dependencies.json` — `allocatable: false` on the structural
+  root node.
+- `tests/test_contracts.py`, `tests/test_feasibility.py` — new tests.
