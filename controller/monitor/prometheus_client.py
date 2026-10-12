@@ -28,10 +28,10 @@ class PrometheusMonitor:
     # Documented PromQL schema — see docs/architecture/prometheus-schema.md
     # Placeholder `{svc}` is substituted via .replace(); PromQL braces are literal.
     QUERY_SCHEMA = {
-        "R_i": 'sum(rate(revision_request_count{service="{svc}"}[10s]))',
+        "R_i": 'sum(rate(revision_app_request_count{service_name="{svc}"}[1m]))',
         "cold_starts": (
             'sum(increase(revision_app_request_latencies_count'
-            '{service="{svc}",response_code_class="2xx"}[60s]))'
+            '{service_name="{svc}",response_code_class="2xx"}[60s]))'
         ),
         "M": (
             'sum(container_memory_working_set_bytes{container!=""}) '
@@ -79,7 +79,7 @@ class PrometheusMonitor:
         """One-shot reachability check. Returns True if Prometheus answers."""
         try:
             r = self._session.get(
-                f"{self.prometheus_url}/-/healthy",
+                f"{self.prometheus_url}/-/ready",
                 timeout=(self.CONNECT_TIMEOUT_SEC, timeout_sec),
             )
             return r.status_code == 200

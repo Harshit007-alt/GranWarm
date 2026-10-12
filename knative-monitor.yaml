@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: knative-user-pods
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchExpressions:
+      - key: serving.knative.dev/revision
+        operator: Exists
+  podMetricsEndpoints:
+    - port: http-usermetric
+      path: /metrics
+      interval: 10s

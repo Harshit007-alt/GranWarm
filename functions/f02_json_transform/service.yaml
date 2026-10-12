@@ -13,6 +13,7 @@ spec:
     spec:
       containers:
         - image: granuwarm/f02_json_transform:v1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           resources:
