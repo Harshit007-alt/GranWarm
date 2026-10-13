@@ -29,51 +29,17 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm repo update
 helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
-  --set prometheus.prometheusSpec.scrapeInterval="2s" \
-  --set prometheus.prometheusSpec.evaluationInterval="2s" \
-  --set grafana.enabled=false
+  -f configs/values-prometheus.yaml
 
-echo "=== [6/8] Applying ServiceMonitor for autoscaler ==="
-kubectl apply -f - <<EOF
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: knative-serving-metrics
-  namespace: monitoring
-  labels:
-    release: prometheus
-spec:
-  namespaceSelector:
-    matchNames: [knative-serving]
-  selector:
-    matchLabels: {app: autoscaler}
-  endpoints:
-    - port: http-metrics
-      interval: 10s
-      path: /metrics
-EOF
+echo "=== [6/8] Waiting for Prometheus operator + CRDs ==="
+kubectl wait --for=condition=Available deploy/prometheus-kube-prometheus-operator \
+  -n monitoring --timeout=300s
+kubectl wait --for=condition=Established --timeout=120s \
+  crd/podmonitors.monitoring.coreos.com \
+  crd/servicemonitors.monitoring.coreos.com
 
-echo "=== [7/8] Applying PodMonitor for user pods ==="
-kubectl apply -f - <<EOF
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  name: knative-user-pods
-  namespace: monitoring
-  labels:
-    release: prometheus
-spec:
-  namespaceSelector:
-    matchNames: [default]
-  selector:
-    matchExpressions:
-      - key: serving.knative.dev/revision
-        operator: Exists
-  podMetricsEndpoints:
-    - port: http-usermetric
-      path: /metrics
-      interval: 10s
-EOF
+echo "=== [7/8] Applying Knative ServiceMonitor + PodMonitor ==="
+kubectl apply -f configs/knative-monitor.yaml
 
 echo "=== [8/8] Waiting for pods ==="
 kubectl wait -n knative-serving --for=condition=Ready pods --all --timeout=300s || true
