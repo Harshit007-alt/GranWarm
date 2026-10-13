@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 import time
 from datetime import datetime, timezone
 from typing import Dict, Optional, List
@@ -26,19 +27,34 @@ class PrometheusMonitor:
       - Returns typed TelemetrySnapshot, not dicts.
     """
 
-    # Documented PromQL schema — see docs/architecture/prometheus-schema.md
-    # Placeholder `{svc}` is substituted via .replace(); PromQL braces are literal.
+    # Documented PromQL schema — see docs/architecture/prometheus-schema.md.
     QUERY_SCHEMA = {
-        "R_i": 'sum(rate(revision_app_request_count{service_name="{svc}"}[1m]))',
+        "R_i": (
+            'sum(rate(revision_app_request_count'
+            '{service_name="{svc}"}[1m])) or vector(0)'
+        ),
         "cold_starts": (
-            'sum(increase(revision_app_request_latencies_count'
-            '{service_name="{svc}",response_code_class="2xx"}[60s]))'
+            'sum(increase(activator_request_count'
+            '{service_name="{svc}"}[60s])) or vector(0)'
         ),
         "M": (
-            'sum(container_memory_working_set_bytes{container!=""}) '
-            '/ sum(node_memory_MemTotal_bytes)'
+            '(sum(container_memory_working_set_bytes'
+            '{namespace="{namespace}",pod=~"{svc}-.*",container!=""}) '
+            '/ sum(kube_pod_container_resource_limits'
+            '{namespace="{namespace}",pod=~"{svc}-.*",'
+            'resource="memory",unit="byte"})) or vector(0)'
         ),
     }
+    REQUIRED_BASE_METRICS = (
+        "revision_app_request_count",
+        "activator_request_count",
+        "container_memory_working_set_bytes",
+        "kube_pod_container_resource_limits",
+    )
+    DNS_LABEL_PATTERN = re.compile(
+        r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$"
+    )
+    SCRAPE_HEALTH_QUERY = "sum(up)"
 
     # Short connect timeout so a down Prometheus does not block the loop.
     # (connect_sec, read_sec) tuple passed to requests.
@@ -46,13 +62,17 @@ class PrometheusMonitor:
 
     def __init__(
         self,
-        prometheus_url: str = "http://localhost:9090",
+        prometheus_url: str = "http://127.0.0.1:9090",
+        namespace: str = "default",
         query_timeout_sec: float = 2.0,
         historical_max_rate: float = 50.0,
         enable_mock_fallback: bool = False,
         required_signals: Optional[List[str]] = None,
     ):
         self.prometheus_url = prometheus_url.rstrip("/")
+        if not self.DNS_LABEL_PATTERN.fullmatch(namespace):
+            raise ValueError(f"Invalid Kubernetes namespace DNS label: {namespace!r}")
+        self.namespace = namespace
         self.query_timeout_sec = query_timeout_sec
         self.historical_max_rate = historical_max_rate
         self.enable_mock_fallback = enable_mock_fallback
@@ -160,8 +180,28 @@ class PrometheusMonitor:
     def fetch_function(
         self, function_id: str, service_name: str,
     ) -> FunctionTelemetry:
+        if not self.DNS_LABEL_PATTERN.fullmatch(service_name):
+            raise TelemetryError(
+                f"Invalid Kubernetes service DNS label: {service_name!r}"
+            )
         now_dt = datetime.now(timezone.utc)
         now = time.time()
+
+        if not self._mock_only:
+            scrape_health = self._query_promql(self.SCRAPE_HEALTH_QUERY)
+            if scrape_health is None or scrape_health <= 0:
+                if self.enable_mock_fallback:
+                    logger.warning(
+                        "Prometheus scrape health unavailable for service=%s; "
+                        "using permitted mock-only telemetry",
+                        service_name,
+                    )
+                    self.force_mock_only()
+                else:
+                    raise TelemetryError(
+                        f"Prometheus scrape health unavailable for "
+                        f"{service_name}; query={self.SCRAPE_HEALTH_QUERY}"
+                    )
 
         if self._mock_only:
             # Fast path — no HTTP at all
@@ -174,7 +214,11 @@ class PrometheusMonitor:
         else:
             raw = {}
             for signal in self.required_signals + ["cold_starts"]:
-                query = self.QUERY_SCHEMA[signal].replace("{svc}", service_name)
+                query = (
+                    self.QUERY_SCHEMA[signal]
+                    .replace("{svc}", service_name)
+                    .replace("{namespace}", self.namespace)
+                )
                 raw[signal] = self._query_promql(query)
 
             mocked_signals = []
@@ -244,25 +288,54 @@ class PrometheusMonitor:
 
     # ------------------------------------------------------------------
     def validate_schema(self) -> None:
-        """Startup check: verify Prometheus reachable and queries parse."""
-        for signal, tmpl in self.QUERY_SCHEMA.items():
-            q = tmpl.replace("{svc}", "__schema_check__")
-            try:
-                r = self._session.get(
-                    f"{self.prometheus_url}/api/v1/query",
-                    params={"query": q},
-                    timeout=(self.CONNECT_TIMEOUT_SEC, self.query_timeout_sec),
-                )
-                if r.status_code != 200:
-                    raise TelemetryError(
-                        f"Schema check failed for '{signal}': "
-                        f"HTTP {r.status_code}"
-                    )
-            except requests.RequestException as e:
+        """Check Prometheus readiness and that configured base metrics exist."""
+        try:
+            ready = self._session.get(
+                f"{self.prometheus_url}/-/ready",
+                timeout=(self.CONNECT_TIMEOUT_SEC, self.query_timeout_sec),
+            )
+            if ready.status_code != 200:
                 raise TelemetryError(
-                    f"Prometheus unreachable at {self.prometheus_url}: {e}"
+                    f"Prometheus is not ready at {self.prometheus_url}: "
+                    f"HTTP {ready.status_code}"
                 )
-        logger.info("Prometheus schema validation passed.")
+            response = self._session.get(
+                f"{self.prometheus_url}/api/v1/label/__name__/values",
+                timeout=(self.CONNECT_TIMEOUT_SEC, self.query_timeout_sec),
+            )
+        except requests.RequestException as e:
+            raise TelemetryError(
+                f"Prometheus unreachable at {self.prometheus_url}: {e}"
+            ) from e
+
+        if response.status_code != 200:
+            raise TelemetryError(
+                "Prometheus metric schema lookup failed: "
+                f"HTTP {response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise TelemetryError(
+                "Prometheus metric schema lookup returned invalid JSON"
+            ) from e
+        if payload.get("status") != "success":
+            raise TelemetryError(
+                "Prometheus metric schema lookup failed with status "
+                f"{payload.get('status')!r}"
+            )
+
+        metric_names = set(payload.get("data", []))
+        missing = [
+            metric for metric in self.REQUIRED_BASE_METRICS
+            if metric not in metric_names
+        ]
+        if missing:
+            raise TelemetryError(
+                "Prometheus is missing required base metrics: "
+                + ", ".join(missing)
+            )
+        logger.info("Prometheus base metric validation passed.")
 
     # ------------------------------------------------------------------
     def get_function_metrics(self, service_name: str) -> Dict[str, float]:

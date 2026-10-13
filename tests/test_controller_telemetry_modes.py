@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from controller.contracts import TelemetryError
 from controller.main import GranuWarmController, OperatingMode
 from controller.monitor.prometheus_client import PrometheusMonitor
@@ -66,12 +68,8 @@ def test_live_monitor_rejects_missing_telemetry_without_mock():
     monitor = PrometheusMonitor(enable_mock_fallback=False)
     monitor._session.get = Mock(side_effect=OSError("Prometheus down"))
 
-    try:
+    with pytest.raises(TelemetryError, match="scrape health unavailable"):
         monitor.fetch_function("f01", "f01-hello-world")
-    except TelemetryError as error:
-        assert "Required signal 'R_i' missing" in str(error)
-    else:
-        raise AssertionError("missing live telemetry must raise TelemetryError")
 
 
 def test_telemetry_failure_is_audited_and_cycle_is_skipped(tmp_path):
