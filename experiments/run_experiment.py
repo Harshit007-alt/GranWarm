@@ -16,6 +16,26 @@ logger = logging.getLogger("ExperimentHarness")
 WORKLOADS = ["W1", "W2", "W3", "W4", "W5"]
 BASELINES = ["B1", "B2", "B3", "B4", "B5", "B6"]
 SEEDS = [42, 123, 456, 789, 1024]
+REQUIRED_METRICS = {
+    "total_requests",
+    "mean_latency_ms",
+    "median_latency_ms",
+    "p95_latency_ms",
+    "p99_latency_ms",
+    "cold_start_rate_pct",
+    "sla_violation_rate_pct",
+    "avg_memory_used_mb",
+    "avg_memory_idle_mb",
+}
+
+
+def _validate_metrics(metrics: Dict[str, float]) -> None:
+    missing = REQUIRED_METRICS.difference(metrics)
+    if missing:
+        raise ValueError(
+            "Simulation returned incomplete metrics: "
+            + ", ".join(sorted(missing))
+        )
 
 
 def run_experiment_matrix(
@@ -53,28 +73,29 @@ def run_experiment_matrix(
                     memory_budget_mb=memory_budget_mb,
                     output_csv=csv_path
                 )
+                _validate_metrics(metrics)
 
                 # Composite cost J surrogate for Wilcoxon significance testing
                 # J = 0.35 * (L/1000) + 0.25 * (CSR/100) + 0.25 * (Mem/Budget) + 0.15 * (SVR/100)
-                norm_L = metrics.get("p95_latency_ms", 50.0) / 1000.0
-                norm_C = metrics.get("cold_start_rate_pct", 0.0) / 100.0
-                norm_M = metrics.get("avg_memory_used_mb", 1000.0) / max(memory_budget_mb, 1.0)
-                norm_S = metrics.get("sla_violation_rate_pct", 0.0) / 100.0
+                norm_L = metrics["p95_latency_ms"] / 1000.0
+                norm_C = metrics["cold_start_rate_pct"] / 100.0
+                norm_M = metrics["avg_memory_used_mb"] / max(memory_budget_mb, 1.0)
+                norm_S = metrics["sla_violation_rate_pct"] / 100.0
                 comp_cost = 0.35 * norm_L + 0.25 * norm_C + 0.25 * norm_M + 0.15 * norm_S
 
                 row = {
                     "workload": w,
                     "baseline": b,
                     "seed": s,
-                    "total_requests": metrics.get("total_requests", 0),
-                    "mean_latency_ms": metrics.get("mean_latency_ms", 0.0),
-                    "median_latency_ms": metrics.get("median_latency_ms", 0.0),
-                    "p95_latency_ms": metrics.get("p95_latency_ms", 0.0),
-                    "p99_latency_ms": metrics.get("p99_latency_ms", 0.0),
-                    "cold_start_rate_pct": metrics.get("cold_start_rate_pct", 0.0),
-                    "sla_violation_rate_pct": metrics.get("sla_violation_rate_pct", 0.0),
-                    "avg_memory_used_mb": metrics.get("avg_memory_used_mb", 0.0),
-                    "avg_memory_idle_mb": metrics.get("avg_memory_idle_mb", 0.0),
+                    "total_requests": metrics["total_requests"],
+                    "mean_latency_ms": metrics["mean_latency_ms"],
+                    "median_latency_ms": metrics["median_latency_ms"],
+                    "p95_latency_ms": metrics["p95_latency_ms"],
+                    "p99_latency_ms": metrics["p99_latency_ms"],
+                    "cold_start_rate_pct": metrics["cold_start_rate_pct"],
+                    "sla_violation_rate_pct": metrics["sla_violation_rate_pct"],
+                    "avg_memory_used_mb": metrics["avg_memory_used_mb"],
+                    "avg_memory_idle_mb": metrics["avg_memory_idle_mb"],
                     "composite_cost": comp_cost
                 }
                 summary_rows.append(row)

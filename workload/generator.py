@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import csv
 import json
 import logging
 import os
@@ -8,6 +9,8 @@ import time
 from typing import Any, Dict, List
 import httpx
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from workload.profiles import get_profile
 
@@ -25,6 +28,7 @@ async def invoke_worker(
     service_name = func_info["service_name"]
     host_header = f"{service_name}.default.127.0.0.1.sslip.io"
     t_req = time.time()
+    error_message = ""
     try:
         resp = await client.get(
             f"{base_url}/",
@@ -33,15 +37,25 @@ async def invoke_worker(
         )
         latency_ms = (time.time() - t_req) * 1000.0
         status = resp.status_code
-    except Exception as e:
+    except httpx.HTTPError as e:
         latency_ms = (time.time() - t_req) * 1000.0
-        status = 500
+        status = ""
+        error_message = str(e)
+        logger.warning(
+            "Request failed for service=%s: %s",
+            service_name, error_message,
+        )
 
     if log_file_handle and lock:
         async with lock:
-            log_file_handle.write(
-                f"{t_req:.4f},{func_info['id']},{func_info['service_name']},{latency_ms:.2f},{status}\n"
-            )
+            csv.writer(log_file_handle).writerow([
+                f"{t_req:.4f}",
+                func_info["id"],
+                service_name,
+                f"{latency_ms:.2f}",
+                status,
+                error_message,
+            ])
 
 
 async def run_workload(
@@ -52,7 +66,11 @@ async def run_workload(
     config_path: str,
     output_path: str = None
 ):
-    logger.info(f"Starting workload generator: profile={profile_name}, duration={duration}s, seed={seed}")
+    logger.info(
+        "Starting workload generator: profile=%s duration=%ss seed=%s "
+        "base_url=%s",
+        profile_name, duration, seed, base_url,
+    )
     rng = np.random.default_rng(seed)
 
     with open(config_path, "r") as f:
@@ -66,35 +84,59 @@ async def run_workload(
     if output_path:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         log_file = open(output_path, "w", buffering=1)
-        log_file.write("timestamp,function_id,service_name,latency_ms,status_code\n")
+        csv.writer(log_file).writerow([
+            "timestamp", "function_id", "service_name",
+            "latency_ms", "status_code", "error",
+        ])
 
-    t_start = time.monotonic()
-    async with httpx.AsyncClient(limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)) as client:
-        active_tasks = set()
-        while True:
-            elapsed = time.monotonic() - t_start
-            if elapsed >= duration:
-                break
+    active_tasks = set()
+    try:
+        t_start = time.monotonic()
+        async with httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=200,
+                max_keepalive_connections=50,
+            )
+        ) as client:
+            try:
+                while True:
+                    elapsed = time.monotonic() - t_start
+                    if elapsed >= duration:
+                        break
 
-            for idx, func in enumerate(functions):
-                rate = profile.get_rate(elapsed, func.get("base_rate", 5.0), idx, len(functions))
-                # Poisson inter-arrival time: wait ~ Exp(lambda)
-                wait_time = rng.exponential(1.0 / max(rate, 0.01))
-                if wait_time < 0.05:
-                    task = asyncio.create_task(
-                        invoke_worker(client, base_url, func, log_file, lock)
+                    for idx, func in enumerate(functions):
+                        rate = profile.get_rate(
+                            elapsed,
+                            func.get("base_rate", 5.0),
+                            idx,
+                            len(functions),
+                        )
+                        # Poisson inter-arrival time: wait ~ Exp(lambda)
+                        wait_time = rng.exponential(1.0 / max(rate, 0.01))
+                        if wait_time < 0.05:
+                            task = asyncio.create_task(
+                                invoke_worker(
+                                    client, base_url, func, log_file, lock,
+                                )
+                            )
+                            active_tasks.add(task)
+                            task.add_done_callback(active_tasks.discard)
+
+                    await asyncio.sleep(0.1)
+
+                if active_tasks:
+                    await asyncio.gather(*active_tasks, return_exceptions=True)
+            finally:
+                for task in tuple(active_tasks):
+                    task.cancel()
+                if active_tasks:
+                    await asyncio.gather(
+                        *active_tasks, return_exceptions=True,
                     )
-                    active_tasks.add(task)
-                    task.add_done_callback(active_tasks.discard)
-
-            await asyncio.sleep(0.1)
-
-        if active_tasks:
-            await asyncio.gather(*active_tasks, return_exceptions=True)
-
-    if log_file:
-        log_file.close()
-    logger.info(f"Workload generation finished successfully.")
+    finally:
+        if log_file:
+            log_file.close()
+    logger.info("Workload generation finished.")
 
 
 def main():
@@ -107,16 +149,19 @@ def main():
     parser.add_argument("--output", type=str, default=None, help="Output CSV path")
 
     args = parser.parse_args()
-    asyncio.run(
-        run_workload(
-            profile_name=args.profile,
-            duration=args.duration,
-            seed=args.seed,
-            base_url=args.base_url,
-            config_path=args.config,
-            output_path=args.output
+    try:
+        asyncio.run(
+            run_workload(
+                profile_name=args.profile,
+                duration=args.duration,
+                seed=args.seed,
+                base_url=args.base_url,
+                config_path=args.config,
+                output_path=args.output,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        logger.info("Workload generation interrupted by user.")
 
 
 if __name__ == "__main__":
