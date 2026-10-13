@@ -1,0 +1,23 @@
+grafana:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 2s
+    evaluationInterval: 2s
+    livenessProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      failureThreshold: 6
+      timeoutSeconds: 10
+    readinessProbe:
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      failureThreshold: 6
+      timeoutSeconds: 10
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 200m
+      limits:
+        memory: 1500Mi
