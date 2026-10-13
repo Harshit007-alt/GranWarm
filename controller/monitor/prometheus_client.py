@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Dict, Optional, List
@@ -58,7 +59,6 @@ class PrometheusMonitor:
         self.required_signals = required_signals or ["R_i", "M"]
         self._prev_rates: Dict[str, float] = {}
         self._prev_timestamps: Dict[str, float] = {}
-        self._mock_warned = False
         self._mock_only = False  # set True by force_mock_only()
 
         # Reuse one session with a short connect timeout baked in.
@@ -108,30 +108,50 @@ class PrometheusMonitor:
     def _query_promql(self, query: str) -> Optional[float]:
         if self._mock_only:
             return None  # never called in mock-only mode, but be defensive
+        status_code = "unavailable"
         try:
             resp = self._session.get(
                 f"{self.prometheus_url}/api/v1/query",
                 params={"query": query},
                 timeout=(self.CONNECT_TIMEOUT_SEC, self.query_timeout_sec),
             )
+            status_code = resp.status_code
             if resp.status_code != 200:
-                logger.debug(f"PromQL HTTP {resp.status_code}: {query[:80]}")
+                logger.warning(
+                    "PromQL request failed: HTTP status=%s query=%r",
+                    status_code, query,
+                )
                 return None
             payload = resp.json()
+            if payload.get("status") != "success":
+                logger.warning(
+                    "PromQL returned status=%r: HTTP status=%s query=%r",
+                    payload.get("status"), status_code, query,
+                )
+                return None
             results = payload.get("data", {}).get("result", [])
             if results:
-                return float(results[0]["value"][1])
+                value = float(results[0]["value"][1])
+                if math.isfinite(value):
+                    return value
+                logger.warning(
+                    "PromQL returned a non-finite value %r: "
+                    "HTTP status=%s query=%r",
+                    value, status_code, query,
+                )
+                return None
+            logger.warning(
+                "PromQL returned an empty result: HTTP status=%s query=%r",
+                status_code, query,
+            )
         except Exception as e:
-            logger.debug(f"PromQL error ({query[:60]}): {e}")
+            logger.warning(
+                "PromQL request failed: HTTP status=%s query=%r error=%s",
+                status_code, query, e,
+            )
         return None
 
     def _mock(self, key: str) -> float:
-        if not self._mock_warned:
-            logger.warning(
-                "Mock telemetry fallback is ACTIVE — decisions are NOT "
-                "based on real cluster state. Use only in simulator/tests."
-            )
-            self._mock_warned = True
         return {"R_i": 5.0, "M": 0.45, "cold_starts": 0.1}[key]
 
     # ------------------------------------------------------------------
@@ -150,19 +170,19 @@ class PrometheusMonitor:
                 "M": self._mock("M"),
                 "cold_starts": self._mock("cold_starts"),
             }
-            used_mock = True
+            mocked_signals = ["R_i", "M", "cold_starts"]
         else:
             raw = {}
             for signal in self.required_signals + ["cold_starts"]:
                 query = self.QUERY_SCHEMA[signal].replace("{svc}", service_name)
                 raw[signal] = self._query_promql(query)
 
-            used_mock = False
+            mocked_signals = []
             for signal in self.required_signals:
                 if raw[signal] is None:
                     if self.enable_mock_fallback:
                         raw[signal] = self._mock(signal)
-                        used_mock = True
+                        mocked_signals.append(signal)
                     else:
                         raise TelemetryError(
                             f"Required signal '{signal}' missing for "
@@ -171,6 +191,12 @@ class PrometheusMonitor:
                         )
             if raw.get("cold_starts") is None:
                 raw["cold_starts"] = 0.0
+
+        if mocked_signals:
+            logger.warning(
+                "Mock telemetry used for service=%s signals=%s",
+                service_name, mocked_signals,
+            )
 
         # Normalization
         r_i = min(max(raw["R_i"] / max(self.historical_max_rate, 1.0), 0.0), 1.0)
@@ -186,8 +212,7 @@ class PrometheusMonitor:
         self._prev_rates[service_name] = r_i
         self._prev_timestamps[service_name] = now
 
-        # Correct source tagging (previous version never set _mocked)
-        if self._mock_only or used_mock:
+        if mocked_signals:
             source = "mock"
         else:
             source = "prometheus"
