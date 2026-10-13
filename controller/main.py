@@ -108,7 +108,9 @@ class GranuWarmController:
         logger.info(f"  budget={self.memory_budget_mb:.0f} MB  "
                     f"dt_fast={self.dt_fast:.1f}s  dt_slow={self.dt_slow:.1f}s")
         logger.info(f"  tree={tree_config}  rules={rules_config}")
-        logger.info(f"  prometheus={prometheus_url}")
+        logger.info(
+            f"  prometheus={prometheus_url} namespace={prometheus_namespace}"
+        )
         logger.info(f"  audit_dir={self.audit_dir}")
         logger.info("=" * 72)
 

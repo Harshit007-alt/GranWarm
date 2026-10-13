@@ -319,13 +319,20 @@ class PrometheusMonitor:
             raise TelemetryError(
                 "Prometheus metric schema lookup returned invalid JSON"
             ) from e
-        if payload.get("status") != "success":
+        if not isinstance(payload, dict) or payload.get("status") != "success":
             raise TelemetryError(
                 "Prometheus metric schema lookup failed with status "
-                f"{payload.get('status')!r}"
+                f"{payload.get('status') if isinstance(payload, dict) else None!r}"
             )
 
-        metric_names = set(payload.get("data", []))
+        metric_values = payload.get("data")
+        if not isinstance(metric_values, list) or not all(
+            isinstance(metric, str) for metric in metric_values
+        ):
+            raise TelemetryError(
+                "Prometheus metric schema lookup returned invalid metric names"
+            )
+        metric_names = set(metric_values)
         missing = [
             metric for metric in self.REQUIRED_BASE_METRICS
             if metric not in metric_names
