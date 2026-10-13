@@ -13,6 +13,7 @@ spec:
     spec:
       containers:
         - image: granuwarm/f07_sentiment_analysis:v1
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           resources:

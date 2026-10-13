@@ -437,11 +437,31 @@ echo $PATH   # should include /usr/local/bin
 
 ### `docker: command not found`
 
-Docker Desktop isn't installed or not on PATH. On WSL2:
+Run the Docker commands from your **Ubuntu (WSL) terminal**, not from a shell
+that is not configured for Docker. From PowerShell, open the Ubuntu terminal with:
 
-1. Open Docker Desktop from the Windows Start menu.
-2. Settings → Resources → WSL Integration → enable for your Ubuntu distro.
-3. In Ubuntu: `docker --version`.
+```powershell
+wsl -d Ubuntu
+```
+
+In Ubuntu, check whether the Docker CLI is available:
+
+```bash
+command -v docker
+docker --version
+```
+
+If `command -v docker` prints nothing:
+
+1. Open Docker Desktop from the Windows Start menu and wait for it to finish starting.
+2. Go to **Settings → Resources → WSL Integration** and enable integration for
+   the Ubuntu distro you use.
+3. In PowerShell, restart WSL with `wsl --shutdown`, then reopen Ubuntu and retry
+   the checks above.
+
+Do not install a second Docker Engine with `apt` when using Docker Desktop; enable
+WSL integration instead. If the CLI is found but Docker commands report that they
+cannot connect to the daemon, see [Cannot connect to the Docker daemon](#cannot-connect-to-the-docker-daemon).
 
 ### `Cannot connect to the Docker daemon`
 
