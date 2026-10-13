@@ -21,6 +21,7 @@ import pathlib
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict
 
@@ -67,7 +68,6 @@ ACTUATING_MODES = {OperatingMode.LIVE}
 MOCK_TELEMETRY_MODES = {
     OperatingMode.SIMULATION,
     OperatingMode.REPLAY,
-    OperatingMode.DRY_RUN,
 }
 SCHEMA_CHECK_MODES = {OperatingMode.SHADOW, OperatingMode.LIVE}
 
@@ -113,12 +113,6 @@ class GranuWarmController:
 
         # ---------------- Telemetry ----------------
         allow_mock = self.mode in MOCK_TELEMETRY_MODES
-        if allow_mock and self.mode != OperatingMode.SIMULATION:
-            logger.warning(
-                f"Mode '{self.mode.value}' permits mock telemetry fallback. "
-                f"Decisions will be based on synthetic values if Prometheus "
-                f"is unreachable."
-            )
         self.monitor = PrometheusMonitor(
             prometheus_url=prometheus_url,
             enable_mock_fallback=allow_mock,
@@ -221,6 +215,24 @@ class GranuWarmController:
         except Exception as e:
             logger.warning(f"Failed to write audit record: {e}")
 
+    def _audit_telemetry_error(self, cycle_id: str, error: TelemetryError) -> None:
+        """Record skipped cycles that could not obtain valid telemetry."""
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        path = self.audit_dir / f"{date}.jsonl"
+        record = {
+            "event": "telemetry_error",
+            "cycle_id": cycle_id,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "mode": self.mode.value,
+            "telemetry_source": "unavailable",
+            "error": str(error),
+        }
+        try:
+            with open(path, "a") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as e:
+            logger.warning(f"Failed to write telemetry error audit record: {e}")
+
     # ------------------------------------------------------------------
     # Fast-loop helpers
     # ------------------------------------------------------------------
@@ -301,7 +313,10 @@ class GranuWarmController:
                     logger.error(
                         f"[{cycle_id}] Telemetry error: {e}. Skipping cycle."
                     )
+                    self._audit_telemetry_error(cycle_id, e)
                     await self._sleep_remaining(t_start)
+                    if max_cycles > 0 and cycle_count >= max_cycles:
+                        break
                     continue
 
                 telemetry_source = self._infer_telemetry_source(snapshot)
