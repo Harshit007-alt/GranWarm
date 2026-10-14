@@ -240,7 +240,7 @@ The target evaluation compares:
 - fixed prewarming;
 - fuzzy-only control;
 - PSO-only control;
-- fuzzy + PSO without dependency granularity; and
+- fuzzy + PSO without dependency granularity; 
 - the complete GranuWarm architecture.
 
 Each experiment should report latency quantiles, cold-start rate, SLA
