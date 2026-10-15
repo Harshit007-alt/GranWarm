@@ -19,6 +19,7 @@ class B5FuzzyPSONoGranularityPolicy(BasePolicy):
     ):
         self.function_ids = function_ids
         self.N = len(function_ids)
+        self.memory_budget_mb = memory_budget_mb
         self.engine = FuzzyEngine(rules_config)
         self.mem_array = np.array([function_memories.get(fid, 256.0) for fid in function_ids])
         self.pso = DiscreteConstrainedPSO(
@@ -53,7 +54,12 @@ class B5FuzzyPSONoGranularityPolicy(BasePolicy):
             metrics=cluster_metrics
         )
         self.current_x = np.copy(best_x)
-        func_alloc = {fid: int(best_x[i]) for i, fid in enumerate(self.function_ids)}
+        total_mem = sum(int(best_x[i]) * self.mem_array[i] for i in range(self.N))
+        if total_mem > self.memory_budget_mb:
+            ratio = self.memory_budget_mb / max(total_mem, 1.0)
+            func_alloc = {fid: int(int(best_x[i]) * ratio) for i, fid in enumerate(self.function_ids)}
+        else:
+            func_alloc = {fid: int(best_x[i]) for i, fid in enumerate(self.function_ids)}
         return func_alloc, {}
 
     def reset(self):

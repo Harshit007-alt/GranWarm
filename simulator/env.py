@@ -132,6 +132,9 @@ class SimEnvironment:
             current_count = len(self.warm_pools[fid]) + len(self.busy_pools[fid])
             spec = self.functions[fid]
             while current_count < target_count:
+                used_mem, _ = self.calculate_memory_usage()
+                if (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                    break
                 # Spawn prewarmed container
                 self._container_counter += 1
                 c = Container(
@@ -173,14 +176,37 @@ class SimEnvironment:
 
     def calculate_memory_usage(self) -> Tuple[float, float]:
         """Returns (total_used_memory_mb, idle_memory_mb)."""
-        used_mem = 0.0
-        idle_mem = 0.0
-        for fid, c_list in self.busy_pools.items():
-            used_mem += sum(c.memory_mb for c in c_list)
-        for fid, c_list in self.warm_pools.items():
-            idle_mem += sum(c.memory_mb for c in c_list)
-            used_mem += sum(c.memory_mb for c in c_list)
-        return used_mem, idle_mem
+        if self.tree_prewarmed:
+            # Granularity Tree shared layer model (B6)
+            # Shared layer memory counted once among prewarmed nodes
+            tree_mem = 0.0
+            for nid, count in self.tree_prewarmed.items():
+                if count > 0 and nid in self.nodes:
+                    tree_mem += float(self.nodes[nid].get("memory_mb", 0.0))
+
+            busy_mem = 0.0
+            warm_leaf_mem = 0.0
+            for fid, c_list in self.busy_pools.items():
+                busy_mem += sum(c.memory_mb for c in c_list)
+            for fid, c_list in self.warm_pools.items():
+                # In shared-layer prewarming, idle warm instances share runtime/library layers
+                leaf_id = f"{fid}_leaf"
+                leaf_mem = float(self.nodes.get(leaf_id, {"memory_mb": self.functions[fid].memory_mb * 0.05}).get("memory_mb", 5.0))
+                warm_leaf_mem += len(c_list) * leaf_mem
+
+            idle_mem = tree_mem + warm_leaf_mem
+            used_mem = busy_mem + idle_mem
+            return used_mem, idle_mem
+        else:
+            # Standard isolated container model (B1 - B5)
+            used_mem = 0.0
+            idle_mem = 0.0
+            for fid, c_list in self.busy_pools.items():
+                used_mem += sum(c.memory_mb for c in c_list)
+            for fid, c_list in self.warm_pools.items():
+                idle_mem += sum(c.memory_mb for c in c_list)
+                used_mem += sum(c.memory_mb for c in c_list)
+            return used_mem, idle_mem
 
     def _compute_granularity_cold_delay(self, spec: FunctionSpec) -> float:
         """Calculates effective cold-start delay factoring in prewarmed dependency nodes."""

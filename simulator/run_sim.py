@@ -35,7 +35,7 @@ def instantiate_policy(policy_name: str, config_path: str, memory_budget_mb: flo
     if p in ["b1", "none", "no_prewarm"]:
         return B1NoPrewarmPolicy(fids)
     elif p in ["b2", "fixed", "fixed_prewarm"]:
-        return B2FixedPrewarmPolicy(fids, fixed_count=2)
+        return B2FixedPrewarmPolicy(fids, fixed_count=2, function_memories=fmems, memory_budget_mb=memory_budget_mb)
     elif p in ["b3", "fuzzy", "fuzzy_only"]:
         return B3FuzzyOnlyPolicy(fids, fmems, memory_budget_mb=memory_budget_mb)
     elif p in ["b4", "pso", "pso_only"]:

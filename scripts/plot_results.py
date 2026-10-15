@@ -3,9 +3,10 @@ import os
 import sys
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import math
 import matplotlib as mpl
-from scipy.stats import wilcoxon
+mpl.use('Agg')
+import matplotlib.pyplot as plt
 
 # Publication styling
 mpl.rcParams.update({
@@ -287,6 +288,26 @@ def generate_latex_tables(df: pd.DataFrame):
         f.write(df_to_latex_table(overhead_df, "Controller Execution Overhead and Resource Utilization", "tab:overhead"))
 
 
+def wilcoxon_signed_rank(x, y):
+    """Calculates non-parametric Wilcoxon signed-rank test (one-sided: x < y)."""
+    diffs = np.array(x, dtype=float) - np.array(y, dtype=float)
+    diffs = diffs[diffs != 0]
+    n = len(diffs)
+    if n == 0:
+        return 0.0, 1.0
+    abs_diffs = np.abs(diffs)
+    order = np.argsort(abs_diffs)
+    ranks = np.zeros(n, dtype=float)
+    for r, idx in enumerate(order, 1):
+        ranks[idx] = r
+    w_plus = float(np.sum(ranks[diffs > 0]))
+    mu = n * (n + 1) / 4.0
+    sigma = math.sqrt(n * (n + 1) * (2 * n + 1) / 24.0)
+    z = (w_plus - mu) / max(sigma, 1e-9)
+    p_val = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+    return w_plus, p_val
+
+
 def compute_wilcoxon_tests(df: pd.DataFrame):
     """Calculates non-parametric Wilcoxon signed-rank tests for B6 vs B1..B5."""
     summary_txt = []
@@ -297,7 +318,7 @@ def compute_wilcoxon_tests(df: pd.DataFrame):
 
     for b in ["B1", "B2", "B3", "B4", "B5"]:
         b_costs = df[df["baseline"] == b].sort_values(["workload", "seed"])["composite_cost"].values
-        stat, p_val = wilcoxon(b6_costs, b_costs, alternative="less")
+        stat, p_val = wilcoxon_signed_rank(b6_costs, b_costs)
         result = f"B6 vs {b}: Statistic W = {stat:.1f}, p-value = {p_val:.6e} ({'Statistically Significant (p < 0.05)' if p_val < 0.05 else 'Not Significant'})"
         summary_txt.append(result)
 

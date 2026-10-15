@@ -45,7 +45,12 @@ class B4PSOOnlyPolicy(BasePolicy):
             metrics=cluster_metrics
         )
         self.current_x = np.copy(best_x)
-        func_alloc = {fid: int(best_x[i]) for i, fid in enumerate(self.function_ids)}
+        total_mem = sum(int(best_x[i]) * self.mem_array[i] for i in range(self.N))
+        if total_mem > self.memory_budget_mb:
+            ratio = self.memory_budget_mb / max(total_mem, 1.0)
+            func_alloc = {fid: int(int(best_x[i]) * ratio) for i, fid in enumerate(self.function_ids)}
+        else:
+            func_alloc = {fid: int(best_x[i]) for i, fid in enumerate(self.function_ids)}
         return func_alloc, {}
 
     def reset(self):
