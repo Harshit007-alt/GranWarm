@@ -76,78 +76,20 @@ GranWarm/
 │   └── STAGE_4_CONTROLLER_EXPERIMENTS_PAPER.md# Assigned to Harshit Arya & Member 4 (Phases 11–14)
 │
 └── results/                                   # Empirical Data & Publication Artifacts
-    ├── raw/                                   # Trace logs (e.g., summary_experiment_matrix.csv)
-    ├── plots/                                 # figure_1_pareto, figure_2_csr, figure_3_temporal, figure_4_ablation (.pdf & .png)
-    ├── tables/                                # table_8.tex, table_9.tex, table_10.tex, table_11.tex, table_16.tex
+    ├── raw/                                   # Recorded run traces and experiment summaries
+    ├── plots/                                 # Generated only from recorded experiment summaries
+    ├── tables/                                # Generated only from recorded experiment summaries
     └── stats_summary.txt                      # Wilcoxon signed-rank significance tests
 2. Verification & Test Execution Results
-All 14 unit tests passed:
-
-Ran 14 tests in 12.141s
-OK
-The experimental harness and plotting pipeline executed:
-
-Offline Simulation: 57,000+ requests processed in 2.72 real seconds.
-Wilcoxon Signed-Rank Significance Tests:
-$B6 \text{ vs } B1$: $W = 0.0, p = 2.98 \times 10^{-8}$ (Statistically Significant, $p < 0.05$)
-$B6 \text{ vs } B2$: $W = 0.0, p = 2.98 \times 10^{-8}$ (Statistically Significant, $p < 0.05$)
-$B6 \text{ vs } B3$: $W = 0.0, p = 2.98 \times 10^{-8}$ (Statistically Significant, $p < 0.05$)
-$B6 \text{ vs } B4$: $W = 0.0, p = 2.98 \times 10^{-8}$ (Statistically Significant, $p < 0.05$)
-$B6 \text{ vs } B5$: $W = 0.0, p = 2.98 \times 10^{-8}$ (Statistically Significant, $p < 0.05$)
+Previously published summary results and derived figures/tables were
+synthetic and have been removed. Do not cite the earlier reported request
+counts, costs, significance values, or performance claims. Run the
+experiment harness on the intended environment to create recorded results
+before plotting or making empirical claims.
 3. Generated Publication Artifacts
-Figure 1: Latency vs. Memory Pareto Frontier (
-
-figure_1_pareto.pdf
- & 
-
-PNG
-)
-Confirms that B6 establishes the lower-left Pareto dominant frontier compared to static allocation (B2) and unconstrained reactive models.
-Figure 2: Cold-Start Rate across Workload Regimes (
-
-figure_2_csr.pdf
- & 
-
-PNG
-)
-Displays cold-start rates across all 5 regimes ($W1$–$W5$), proving B6 maintains under 4% CSR even during bursty traffic ($W3$) and non-stationary distribution shifts ($W5$).
-Figure 3: Temporal Dynamic Adaptation Under Bursty Traffic (
-
-figure_3_temporal.pdf
- & 
-
-PNG
-)
-3-panel visualization contrasting static capacity against GranuWarm's adaptive prewarming and proactive suppression of cold-start bursts.
-Figure 4: Ablation Study Cost Attribution (
-
-figure_4_ablation.pdf
- & 
-
-PNG
-)
-Isolates the incremental improvements answering RQ1 ($B1 \to B3$), RQ2 ($B3 \to B5$), and RQ3 ($B5 \to B6$).
-LaTeX Tables Ready for Paper Inclusion:
-
-
-table_8.tex
-: Overall Benchmark Performance across all baselines
-
-
-table_9.tex
-: P95 Tail Latency by Workload Regime
-
-
-table_10.tex
-: Cold-Start Frequency by Workload Regime
-
-
-table_11.tex
-: Memory Footprint by Workload Regime
-
-
-table_16.tex
-: Controller Execution Overhead
+No empirical publication artifacts are currently available. The plotting
+script now requires a recorded summary CSV and does not synthesize result
+rows, temporal traces, or controller-overhead measurements.
 4. Next Steps for Team Members
 Tijil Gupta: Execute scripts/setup_env.sh on an Ubuntu 22.04 LTS host to initialize the local KinD cluster, build the Docker images from docker/ and functions/, and deploy the 12 Knative services.
 Ayush Rawat: Verify live Prometheus metric scraping with controller/monitor/prometheus_client.py and run live traffic generation using workload/generator.py --profile W3.

@@ -115,16 +115,17 @@ it is no longer the only safety mechanism.
 **Goal:** ensure decisions are based on real and correctly interpreted
 signals.
 
-**Status: MOSTLY COMPLETE.** Mock fallback is opt-in, freshness is
-validated, and `mock` / `replay` / `simulator` sources are exempt from
-the staleness check. A reachability `probe()` and a pure-mock fast path
-eliminate the pathological 144-second cycle observed on Windows when
-Prometheus was unreachable.
+**Status: MOSTLY COMPLETE.** Shadow and live modes reject synthetic
+telemetry, telemetry failures skip and audit the cycle, and telemetry
+queries validate response status and finite values. The query and
+deployment assumptions are documented in
+[the Prometheus schema](./prometheus-schema.md).
 
 Remaining work:
 
-- validate the cold-start PromQL query against the deployed Knative
-  metric schema;
+- verify the documented Activator metric and labels against the deployed
+  Knative version; `C_i` is currently a proxy, not a measured cold-start
+  count;
 - add recorded Prometheus fixtures and an integration test against the
   selected Knative version.
 
@@ -132,7 +133,7 @@ Remaining work:
 
 - ✅ live mode cannot silently continue on synthetic values;
 - ⏳ every signal has a documented query, unit, and normalization
-  (partially done — cold-start query still to be confirmed);
+  (Activator proxy and deployment labels still require cluster validation);
 - ✅ stale data is rejected or clearly marked;
 - ⏳ telemetry snapshots are replayable (contract supports it; loader
   not yet implemented).

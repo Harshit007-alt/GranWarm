@@ -21,6 +21,7 @@ import pathlib
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict
 
@@ -67,7 +68,6 @@ ACTUATING_MODES = {OperatingMode.LIVE}
 MOCK_TELEMETRY_MODES = {
     OperatingMode.SIMULATION,
     OperatingMode.REPLAY,
-    OperatingMode.DRY_RUN,
 }
 SCHEMA_CHECK_MODES = {OperatingMode.SHADOW, OperatingMode.LIVE}
 
@@ -86,13 +86,14 @@ class GranuWarmController:
         self,
         tree_config: str = "configs/dependencies.json",
         rules_config: str = "configs/fuzzy_rules.json",
-        prometheus_url: str = "http://localhost:9090",
+        prometheus_url: str = "http://127.0.0.1:9090",
         memory_budget_mb: float = 4096.0,
         dt_fast_sec: float = 10.0,
         dt_slow_sec: float = 60.0,
         mode: OperatingMode = OperatingMode.DRY_RUN,
         audit_dir: str = "results/audit",
         stale_allow: bool = False,
+        prometheus_namespace: str = "default",
     ):
         self.dt_fast = float(dt_fast_sec)
         self.dt_slow = float(dt_slow_sec)
@@ -107,20 +108,17 @@ class GranuWarmController:
         logger.info(f"  budget={self.memory_budget_mb:.0f} MB  "
                     f"dt_fast={self.dt_fast:.1f}s  dt_slow={self.dt_slow:.1f}s")
         logger.info(f"  tree={tree_config}  rules={rules_config}")
-        logger.info(f"  prometheus={prometheus_url}")
+        logger.info(
+            f"  prometheus={prometheus_url} namespace={prometheus_namespace}"
+        )
         logger.info(f"  audit_dir={self.audit_dir}")
         logger.info("=" * 72)
 
         # ---------------- Telemetry ----------------
         allow_mock = self.mode in MOCK_TELEMETRY_MODES
-        if allow_mock and self.mode != OperatingMode.SIMULATION:
-            logger.warning(
-                f"Mode '{self.mode.value}' permits mock telemetry fallback. "
-                f"Decisions will be based on synthetic values if Prometheus "
-                f"is unreachable."
-            )
         self.monitor = PrometheusMonitor(
             prometheus_url=prometheus_url,
+            namespace=prometheus_namespace,
             enable_mock_fallback=allow_mock,
         )
 
@@ -221,6 +219,24 @@ class GranuWarmController:
         except Exception as e:
             logger.warning(f"Failed to write audit record: {e}")
 
+    def _audit_telemetry_error(self, cycle_id: str, error: TelemetryError) -> None:
+        """Record skipped cycles that could not obtain valid telemetry."""
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        path = self.audit_dir / f"{date}.jsonl"
+        record = {
+            "event": "telemetry_error",
+            "cycle_id": cycle_id,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "mode": self.mode.value,
+            "telemetry_source": "unavailable",
+            "error": str(error),
+        }
+        try:
+            with open(path, "a") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as e:
+            logger.warning(f"Failed to write telemetry error audit record: {e}")
+
     # ------------------------------------------------------------------
     # Fast-loop helpers
     # ------------------------------------------------------------------
@@ -301,7 +317,10 @@ class GranuWarmController:
                     logger.error(
                         f"[{cycle_id}] Telemetry error: {e}. Skipping cycle."
                     )
+                    self._audit_telemetry_error(cycle_id, e)
                     await self._sleep_remaining(t_start)
+                    if max_cycles > 0 and cycle_count >= max_cycles:
+                        break
                     continue
 
                 telemetry_source = self._infer_telemetry_source(snapshot)
@@ -436,7 +455,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=str, default="configs/dependencies.json")
     parser.add_argument("--rules", type=str, default="configs/fuzzy_rules.json")
-    parser.add_argument("--prometheus-url", type=str, default="http://localhost:9090")
+    parser.add_argument(
+        "--prometheus-config", type=str, default="configs/prometheus.json",
+    )
+    parser.add_argument("--prometheus-url", type=str)
+    parser.add_argument("--prometheus-namespace", type=str)
     parser.add_argument("--budget", type=float, default=4096.0)
     parser.add_argument("--dt-fast", type=float, default=10.0)
     parser.add_argument("--dt-slow", type=float, default=60.0)
@@ -458,11 +481,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main():
     args = build_arg_parser().parse_args()
     mode = OperatingMode(args.mode)
+    with open(args.prometheus_config, encoding="utf-8") as config_file:
+        prometheus_config = json.load(config_file)
+    if not isinstance(prometheus_config, dict):
+        raise ValueError("Prometheus config must be a JSON object")
+    prometheus_url = args.prometheus_url or prometheus_config["url"]
+    prometheus_namespace = (
+        args.prometheus_namespace or prometheus_config["namespace"]
+    )
 
     controller = GranuWarmController(
         tree_config=args.config,
         rules_config=args.rules,
-        prometheus_url=args.prometheus_url,
+        prometheus_url=prometheus_url,
+        prometheus_namespace=prometheus_namespace,
         memory_budget_mb=args.budget,
         dt_fast_sec=args.dt_fast,
         dt_slow_sec=args.dt_slow,

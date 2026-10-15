@@ -401,6 +401,53 @@ This reads Prometheus and computes decisions without touching the cluster.
 python -m controller.main --mode live
 ```
 
+### Step 10.5 — Send live workload through Knative ingress
+
+Run these commands from **WSL**, where `kubectl` can access the KinD cluster.
+Check that the services are ready:
+
+```bash
+kubectl config current-context
+kubectl get ksvc
+```
+
+In a dedicated WSL terminal, forward Kourier's HTTP port to WSL localhost:
+
+```bash
+kubectl get svc -n kourier-system
+kubectl port-forward -n kourier-system svc/kourier 8080:80
+```
+
+Keep that terminal open. In a second WSL terminal, verify one service through
+the same forwarded port:
+
+```bash
+curl -i -H "Host: f01-hello-world.default.127.0.0.1.sslip.io" \
+  http://127.0.0.1:8080/
+```
+
+Then run the workload generator against that exact URL:
+
+```bash
+python workload/generator.py \
+  --profile W3 \
+  --duration 120 \
+  --base-url http://127.0.0.1:8080 \
+  --output results/raw/live_W3.csv
+```
+
+The generator sets the Knative service `Host` header for each function and
+records HTTP responses separately from connection errors. A blank
+`status_code` with an `error` in the CSV means the request did not receive an
+HTTP response; it is not a synthetic status. A successful `curl` from Git
+Bash/Windows does not establish that `localhost` from WSL reaches the same
+port, so run both the port-forward and test curl in WSL.
+
+Press Ctrl+C to stop early; outstanding requests are cancelled and the CSV is
+closed cleanly. Connection errors usually mean the port-forward stopped, the
+generator is targeting a different port, or the request is being run from a
+different environment than the port-forward.
+
 ---
 
 ## 11. Troubleshooting
@@ -437,11 +484,31 @@ echo $PATH   # should include /usr/local/bin
 
 ### `docker: command not found`
 
-Docker Desktop isn't installed or not on PATH. On WSL2:
+Run the Docker commands from your **Ubuntu (WSL) terminal**, not from a shell
+that is not configured for Docker. From PowerShell, open the Ubuntu terminal with:
 
-1. Open Docker Desktop from the Windows Start menu.
-2. Settings → Resources → WSL Integration → enable for your Ubuntu distro.
-3. In Ubuntu: `docker --version`.
+```powershell
+wsl -d Ubuntu
+```
+
+In Ubuntu, check whether the Docker CLI is available:
+
+```bash
+command -v docker
+docker --version
+```
+
+If `command -v docker` prints nothing:
+
+1. Open Docker Desktop from the Windows Start menu and wait for it to finish starting.
+2. Go to **Settings → Resources → WSL Integration** and enable integration for
+   the Ubuntu distro you use.
+3. In PowerShell, restart WSL with `wsl --shutdown`, then reopen Ubuntu and retry
+   the checks above.
+
+Do not install a second Docker Engine with `apt` when using Docker Desktop; enable
+WSL integration instead. If the CLI is found but Docker commands report that they
+cannot connect to the daemon, see [Cannot connect to the Docker daemon](#cannot-connect-to-the-docker-daemon).
 
 ### `Cannot connect to the Docker daemon`
 

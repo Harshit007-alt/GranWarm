@@ -31,14 +31,14 @@ is `dry_run`.
 | --- | --- | --- | --- | --- |
 | `simulation` | Offline, synthetic telemetry | No | Yes | No |
 | `replay` | Deterministic replay of a recorded trace | No | Yes | No |
-| `dry_run` | Full pipeline, no Kubernetes writes | No | Yes (warned) | No |
+| `dry_run` | Full pipeline, no Kubernetes writes | Yes at fetch time | No | No |
 | `shadow` | Real telemetry, decisions logged only | Yes | No | No |
 | `live` | Full actuation | Yes | No | Yes |
 
-At startup, `shadow` and `live` validate the Prometheus schema and
-refuse to run if Prometheus is unreachable. `dry_run` probes once and,
-if Prometheus is unreachable, switches to a pure-mock fast path with no
-further HTTP calls.
+At startup, `shadow` and `live` validate the Prometheus metric schema and
+refuse to run if Prometheus is unreachable. `shadow`, `live`, and
+`dry_run` never permit mock telemetry. Simulation and replay may use mock
+telemetry; a failed Prometheus probe selects a pure-mock fast path.
 
 ## Current workflow
 
@@ -52,7 +52,7 @@ workload profile
   -> CSV metrics
 
 Live / dry-run / shadow controller:
-Prometheus (or probe + mock fallback in offline modes)
+Prometheus
   -> PrometheusMonitor.fetch_snapshot()
   -> TelemetrySnapshot (typed, validated for freshness)
   -> FuzzyEngine.evaluate() per function
@@ -139,7 +139,9 @@ Every decision is appended as one JSON line to
 [controller/monitor/prometheus_client.py](../../controller/monitor/prometheus_client.py)
 queries Prometheus for invocation rate, a cold-start-related signal,
 and memory pressure, then normalizes them into the fuzzy controller
-domains and returns a typed `TelemetrySnapshot`.
+domains and returns a typed `TelemetrySnapshot`. See the
+[Prometheus query schema](./prometheus-schema.md) for the exact selectors
+and deployment assumptions.
 
 Current behavior:
 
