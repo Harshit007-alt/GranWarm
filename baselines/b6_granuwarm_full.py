@@ -3,11 +3,13 @@ import numpy as np
 from controller.fuzzy.fuzzy_engine import FuzzyEngine
 from controller.granularity.tree import GranularityTree
 from controller.pso.pso_optimizer import DiscreteConstrainedPSO
+from controller.safety.feasibility import FeasibilityService
+from controller.contracts import AllocationRequest
 from .base_policy import BasePolicy
 
 
 class B6GranuWarmFullPolicy(BasePolicy):
-    """B6: Complete GranuWarm Framework (Fuzzy FIS + Granularity Tree Projection + Constrained PSO)."""
+    """B6: Complete GranuWarm Framework (Fuzzy FIS + Granularity Tree Projection + Constrained PSO + Feasibility Gate)."""
 
     def __init__(
         self,
@@ -20,6 +22,7 @@ class B6GranuWarmFullPolicy(BasePolicy):
         self.tree = GranularityTree(tree_config)
         self.engine = FuzzyEngine(rules_config)
         self.memory_budget_mb = memory_budget_mb
+        self.safety = FeasibilityService(self.tree, budget_mb=memory_budget_mb)
 
         self.K = self.tree.get_total_nodes()
         self.node_ids = self.tree.node_ids
@@ -30,7 +33,9 @@ class B6GranuWarmFullPolicy(BasePolicy):
             swarm_size=swarm_size,
             max_iter=max_iter,
             memory_budget_mb=memory_budget_mb,
-            node_memories=self.node_memories
+            node_memories=self.node_memories,
+            node_ids=self.node_ids,
+            parent_map=self.tree.parent_map
         )
         self.current_x = np.zeros(self.K, dtype=int)
 
@@ -62,11 +67,20 @@ class B6GranuWarmFullPolicy(BasePolicy):
         )
         self.current_x = np.copy(best_x)
 
-        # 4. Map allocations
-        tree_alloc = {nid: int(best_x[i]) for i, nid in enumerate(self.node_ids)}
-        func_alloc = self.tree.map_tree_allocation_to_functions(tree_alloc)
+        # 4. Map allocations and pass through Feasibility Gate
+        raw_tree_alloc = {nid: int(best_x[i]) for i, nid in enumerate(self.node_ids)}
+        req = AllocationRequest(
+            cycle_id="sim",
+            source="pso",
+            node_capacities=raw_tree_alloc,
+            requested_budget_mb=self.memory_budget_mb
+        )
+        dec = self.safety.process(req)
+        func_alloc = dec.function_capacities
+        tree_alloc = dec.node_capacities
 
         return func_alloc, tree_alloc
 
     def reset(self):
         self.current_x = np.zeros(self.K, dtype=int)
+

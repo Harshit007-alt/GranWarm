@@ -100,13 +100,26 @@ def run_experiment_matrix(
                 }
                 summary_rows.append(row)
 
-    # Write summary CSV
+    # Write or merge summary CSV
     if summary_rows:
+        existing_rows_dict = {}
+        if os.path.exists(summary_path):
+            with open(summary_path, "r", newline="") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    key = (r.get("workload"), r.get("baseline"), str(r.get("seed")))
+                    existing_rows_dict[key] = r
+
+        for r in summary_rows:
+            key = (r.get("workload"), r.get("baseline"), str(r.get("seed")))
+            existing_rows_dict[key] = r
+
+        all_rows = list(existing_rows_dict.values())
         fieldnames = list(summary_rows[0].keys())
         with open(summary_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(summary_rows)
+            writer.writerows(all_rows)
 
     total_time = time.time() - t0_all
     logger.info(f"Experiment matrix finished in {total_time:.2f}s! Summary written to {summary_path}")
@@ -116,6 +129,9 @@ def main():
     parser = argparse.ArgumentParser(description="GranuWarm Automated Experiment Runner")
     parser.add_argument("--mini-test", action="store_true", help="Quick verification test (4 runs)")
     parser.add_argument("--full", action="store_true", help="Run full 150-run matrix")
+    parser.add_argument("--workloads", nargs="+", default=None, help="Workloads to run (e.g. W1 W2 W3 W4 W5)")
+    parser.add_argument("--baselines", nargs="+", default=None, help="Baselines to run (e.g. B1 B2 B3 B4 B5 B6)")
+    parser.add_argument("--seeds", nargs="+", type=int, default=None, help="Seeds to run (e.g. 42 123 456)")
     parser.add_argument("--duration", type=float, default=600.0, help="Duration per run in seconds")
     parser.add_argument("--budget", type=float, default=4096.0, help="Memory budget in MB")
     parser.add_argument("--config", type=str, default="configs/dependencies.json")
@@ -134,11 +150,18 @@ def main():
         seeds = SEEDS
         duration = args.duration
     else:
-        # Default test matrix: 2 workloads, 4 baselines, 2 seeds
+        # Default test matrix: all 6 baselines across W1 and W3
         workloads = ["W1", "W3"]
-        baselines = ["B1", "B2", "B3", "B6"]
+        baselines = ["B1", "B2", "B3", "B4", "B5", "B6"]
         seeds = [42, 123]
         duration = 300.0
+
+    if args.workloads:
+        workloads = args.workloads
+    if args.baselines:
+        baselines = args.baselines
+    if args.seeds:
+        seeds = args.seeds
 
     run_experiment_matrix(
         workloads=workloads,
