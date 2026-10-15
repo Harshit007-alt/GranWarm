@@ -29,12 +29,6 @@ class PrometheusMonitor:
 
     # Documented PromQL schema — see docs/architecture/prometheus-schema.md.
     QUERY_SCHEMA = {
-<<<<<<< HEAD
-        "R_i": 'sum(rate(revision_app_request_count{service_name="{svc}"}[1m])) or vector(0)',
-        "cold_starts": (
-            'sum(increase(revision_app_request_latencies_count'
-            '{service_name="{svc}",response_code_class="2xx"}[60s])) or vector(0)'
-=======
         "R_i": (
             'sum(rate(revision_app_request_count'
             '{service_name="{svc}"}[1m])) or vector(0)'
@@ -42,7 +36,6 @@ class PrometheusMonitor:
         "cold_starts": (
             'sum(increase(activator_request_count'
             '{service_name="{svc}"}[60s])) or vector(0)'
->>>>>>> origin/main
         ),
         "M": (
             '(sum(container_memory_working_set_bytes'
@@ -231,9 +224,7 @@ class PrometheusMonitor:
             mocked_signals = []
             for signal in self.required_signals:
                 if raw[signal] is None:
-                    if signal == "R_i":
-                        raw[signal] = 0.0
-                    elif self.enable_mock_fallback:
+                    if self.enable_mock_fallback:
                         raw[signal] = self._mock(signal)
                         mocked_signals.append(signal)
                     else:
