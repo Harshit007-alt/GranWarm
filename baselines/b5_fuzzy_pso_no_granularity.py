@@ -56,8 +56,21 @@ class B5FuzzyPSONoGranularityPolicy(BasePolicy):
         self.current_x = np.copy(best_x)
         total_mem = sum(int(best_x[i]) * self.mem_array[i] for i in range(self.N))
         if total_mem > self.memory_budget_mb:
-            ratio = self.memory_budget_mb / max(total_mem, 1.0)
-            func_alloc = {fid: int(int(best_x[i]) * ratio) for i, fid in enumerate(self.function_ids)}
+            func_alloc = {fid: 0 for fid in self.function_ids}
+            allocated_mem = 0.0
+            # Prioritize functions with highest fuzzy demand and positive PSO proposal
+            priorities = [int(best_x[i]) * (fuzzy_prior[i] + 0.1) for i in range(self.N)]
+            order = np.argsort(-np.array(priorities))
+            for idx in order:
+                fid = self.function_ids[idx]
+                req_count = int(best_x[idx])
+                mem_each = self.mem_array[idx]
+                if req_count > 0:
+                    max_can_fit = int((self.memory_budget_mb - allocated_mem) // max(mem_each, 1.0))
+                    count = min(req_count, max_can_fit)
+                    if count > 0:
+                        func_alloc[fid] = count
+                        allocated_mem += count * mem_each
         else:
             func_alloc = {fid: int(best_x[i]) for i, fid in enumerate(self.function_ids)}
         return func_alloc, {}

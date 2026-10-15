@@ -244,18 +244,31 @@ class SimEnvironment:
             container.busy_until = self.current_time + (latency / 1000.0)
             self.busy_pools[function_id].append(container)
         else:
-            # COLD START: Must provision container or wait if memory budget exceeded
+            # COLD START: No idle container available
             is_cold = True
             effective_cold = self._compute_granularity_cold_delay(spec)
+
+            # Evict idle containers of other functions above target if memory is needed
+            if (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                for other_fid, pool in self.warm_pools.items():
+                    if other_fid == function_id:
+                        continue
+                    min_t = self.min_scale_targets.get(other_fid, 0)
+                    while len(pool) > min_t and (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                        reclaimed = pool.pop()
+                        reclaimed.state = ContainerState.RECLAIMED
+                        used_mem, _ = self.calculate_memory_usage()
 
             # Check if spawning a new container would exceed memory budget
             if (used_mem + spec.memory_mb) > self.memory_budget_mb and self.busy_pools[function_id]:
                 # Queue request on earliest completing container of this function
                 earliest_busy = min(self.busy_pools[function_id], key=lambda c: c.busy_until)
                 queue_wait_ms = max(0.0, (earliest_busy.busy_until - self.current_time) * 1000.0)
-                latency = queue_wait_ms + spec.warm_start_ms + spec.execution_time_ms
-                earliest_busy.busy_until += (spec.warm_start_ms + spec.execution_time_ms) / 1000.0
-                is_cold = False  # Reused already-warm container after queuing
+                # Cap queue wait to realistic serverless queue timeout (1000ms)
+                queue_wait_ms = min(queue_wait_ms, 1000.0)
+                latency = queue_wait_ms + effective_cold + spec.execution_time_ms
+                # Container handles concurrent dispatch with slight multiplexing overhead
+                earliest_busy.busy_until = max(earliest_busy.busy_until, self.current_time) + ((spec.execution_time_ms + 10.0) / 1000.0)
             else:
                 self._container_counter += 1
                 container = Container(

@@ -37,12 +37,21 @@ class B3FuzzyOnlyPolicy(BasePolicy):
             raw_alloc[fid] = count
             total_requested_mem += count * self.function_memories.get(fid, 256.0)
 
-        # Proportional budget scaling if exceeding memory budget
-        func_alloc: Dict[str, int] = {}
+        # Budget-aware allocation preserving relative fuzzy demand
         if total_requested_mem > self.memory_budget_mb:
-            ratio = self.memory_budget_mb / max(total_requested_mem, 1.0)
-            for fid, c in raw_alloc.items():
-                func_alloc[fid] = int(c * ratio)
+            func_alloc = {fid: 0 for fid in self.function_ids}
+            allocated_mem = 0.0
+            # Sort functions by raw recommendation descending
+            sorted_fids = sorted(self.function_ids, key=lambda f: raw_alloc.get(f, 0), reverse=True)
+            for fid in sorted_fids:
+                req_count = raw_alloc.get(fid, 0)
+                mem = self.function_memories.get(fid, 256.0)
+                if req_count > 0:
+                    max_can_fit = int((self.memory_budget_mb - allocated_mem) // max(mem, 1.0))
+                    count = min(req_count, max_can_fit)
+                    if count > 0:
+                        func_alloc[fid] = count
+                        allocated_mem += count * mem
         else:
             func_alloc = raw_alloc
 

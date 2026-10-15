@@ -29,8 +29,21 @@ class B2FixedPrewarmPolicy(BasePolicy):
         if self.function_memories:
             total_req = sum(self.fixed_count * self.function_memories.get(fid, 256.0) for fid in self.function_ids)
             if total_req > self.memory_budget_mb:
-                ratio = self.memory_budget_mb / max(total_req, 1.0)
-                func_alloc = {fid: max(0, int(self.fixed_count * ratio)) for fid in self.function_ids}
+                # Greedily allocate warm instances up to budget
+                func_alloc = {fid: 0 for fid in self.function_ids}
+                allocated_mem = 0.0
+                # Pass 1: Allocate 1 instance to functions that fit (smaller footprint first)
+                for fid in sorted(self.function_ids, key=lambda f: self.function_memories.get(f, 256.0)):
+                    m = self.function_memories.get(fid, 256.0)
+                    if allocated_mem + m <= self.memory_budget_mb:
+                        func_alloc[fid] = 1
+                        allocated_mem += m
+                # Pass 2: Allocate up to fixed_count where budget permits
+                for fid in sorted(self.function_ids, key=lambda f: self.function_memories.get(f, 256.0)):
+                    m = self.function_memories.get(fid, 256.0)
+                    if func_alloc[fid] < self.fixed_count and allocated_mem + m <= self.memory_budget_mb:
+                        func_alloc[fid] += 1
+                        allocated_mem += m
             else:
                 func_alloc = {fid: self.fixed_count for fid in self.function_ids}
         else:

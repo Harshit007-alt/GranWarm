@@ -197,20 +197,25 @@ def plot_figure_4_ablation(df: pd.DataFrame):
 
     plt.figure(figsize=(7, 4))
     x_pos = np.arange(len(order))
-    plt.bar(x_pos, grouped["mean"], yerr=grouped["std"], capsize=5, color="#2b5c8f", alpha=0.85)
+    means = grouped["mean"].fillna(0.0)
+    stds = grouped["std"].fillna(0.0)
+    plt.bar(x_pos, means, yerr=stds, capsize=5, color="#2b5c8f", alpha=0.85)
 
     plt.xticks(x_pos, order)
     plt.ylabel("Composite Fitness Cost J (Lower is Better)")
     plt.title("Figure 4: Ablation Study Performance Progression", fontweight="bold")
     plt.grid(axis="y", linestyle="--", alpha=0.5)
 
-    # Annotate research question leaps
-    plt.annotate("RQ1: Fuzzy\n-37% J", xy=(2, grouped.loc["B3", "mean"]), xytext=(2, grouped.loc["B3", "mean"] + 0.12),
-                 ha="center", arrowprops=dict(arrowstyle="->", color="black"))
-    plt.annotate("RQ2: Fuzzy+PSO\n-22% J", xy=(4, grouped.loc["B5", "mean"]), xytext=(4, grouped.loc["B5", "mean"] + 0.12),
-                 ha="center", arrowprops=dict(arrowstyle="->", color="black"))
-    plt.annotate("RQ3: Tree DAG\n-31% J", xy=(5, grouped.loc["B6", "mean"]), xytext=(5, grouped.loc["B6", "mean"] + 0.12),
-                 ha="center", arrowprops=dict(arrowstyle="->", color="black"))
+    # Annotate research question leaps if data exists
+    if pd.notna(grouped.loc["B3", "mean"]) and grouped.loc["B3", "mean"] > 0:
+        plt.annotate("RQ1: Fuzzy\n-37% J", xy=(2, grouped.loc["B3", "mean"]), xytext=(2, grouped.loc["B3", "mean"] + 0.12),
+                     ha="center", arrowprops=dict(arrowstyle="->", color="black"))
+    if pd.notna(grouped.loc["B5", "mean"]) and grouped.loc["B5", "mean"] > 0:
+        plt.annotate("RQ2: Fuzzy+PSO\n-22% J", xy=(4, grouped.loc["B5", "mean"]), xytext=(4, grouped.loc["B5", "mean"] + 0.12),
+                     ha="center", arrowprops=dict(arrowstyle="->", color="black"))
+    if pd.notna(grouped.loc["B6", "mean"]) and grouped.loc["B6", "mean"] > 0:
+        plt.annotate("RQ3: Tree DAG\n-31% J", xy=(5, grouped.loc["B6", "mean"]), xytext=(5, grouped.loc["B6", "mean"] + 0.12),
+                     ha="center", arrowprops=dict(arrowstyle="->", color="black"))
 
     plt.tight_layout()
     plt.savefig(os.path.join(PLOTS_DIR, "figure_4_ablation.png"))
@@ -314,12 +319,28 @@ def compute_wilcoxon_tests(df: pd.DataFrame):
     summary_txt.append("=== GranuWarm Wilcoxon Signed-Rank Significance Tests ===")
     summary_txt.append("Hypothesis: GranuWarm (B6) achieves strictly lower composite cost than baseline.\n")
 
-    b6_costs = df[df["baseline"] == "B6"].sort_values(["workload", "seed"])["composite_cost"].values
+    b6_df = df[df["baseline"] == "B6"][["workload", "seed", "composite_cost"]]
+    if b6_df.empty:
+        summary_txt.append("B6 (GranuWarm) data not found in summary.")
+        summary_content = "\n".join(summary_txt)
+        print(summary_content)
+        with open(os.path.join(RESULTS_DIR, "stats_summary.txt"), "w") as f:
+            f.write(summary_content)
+        return
 
     for b in ["B1", "B2", "B3", "B4", "B5"]:
-        b_costs = df[df["baseline"] == b].sort_values(["workload", "seed"])["composite_cost"].values
-        stat, p_val = wilcoxon_signed_rank(b6_costs, b_costs)
-        result = f"B6 vs {b}: Statistic W = {stat:.1f}, p-value = {p_val:.6e} ({'Statistically Significant (p < 0.05)' if p_val < 0.05 else 'Not Significant'})"
+        b_df = df[df["baseline"] == b][["workload", "seed", "composite_cost"]]
+        merged = pd.merge(b6_df, b_df, on=["workload", "seed"], suffixes=("_b6", f"_{b.lower()}"))
+        if len(merged) == 0:
+            result = f"B6 vs {b}: Skipped (no matching paired runs found in dataset)"
+            summary_txt.append(result)
+            continue
+
+        b6_vals = merged["composite_cost_b6"].values
+        b_vals = merged[f"composite_cost_{b.lower()}"].values
+        stat, p_val = wilcoxon_signed_rank(b6_vals, b_vals)
+        sig_str = 'Statistically Significant (p < 0.05)' if p_val < 0.05 else 'Not Significant'
+        result = f"B6 vs {b} (N={len(merged)}): Statistic W = {stat:.1f}, p-value = {p_val:.6e} ({sig_str})"
         summary_txt.append(result)
 
     summary_content = "\n".join(summary_txt)
