@@ -1,0 +1,37 @@
+{
+  "decision_id": "dec-39284f2345bf",
+  "created_at": "2026-10-17T13:09:19.396688+00:00",
+  "saved_at": "2026-10-17T13:09:19.559176+00:00",
+  "function_capacities": {
+    "f01": 1,
+    "f02": 1,
+    "f03": 1,
+    "f04": 1,
+    "f05": 1,
+    "f08": 1,
+    "f09": 1,
+    "f10": 1,
+    "f11": 1,
+    "f12": 1
+  },
+  "node_capacities": {
+    "python_311": 1,
+    "nodejs_20": 1,
+    "numpy": 1,
+    "pillow_bundle": 1,
+    "pandas_bundle": 1,
+    "shared_web_utils": 1,
+    "f01_leaf": 1,
+    "f02_leaf": 1,
+    "f03_leaf": 1,
+    "f04_leaf": 1,
+    "f05_leaf": 1,
+    "f08_leaf": 1,
+    "f09_leaf": 1,
+    "f10_leaf": 1,
+    "f11_leaf": 1,
+    "f12_leaf": 1
+  },
+  "estimated_memory_mb": 340.0,
+  "source": "fuzzy+delta"
+}

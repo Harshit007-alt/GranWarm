@@ -23,7 +23,8 @@ async def invoke_worker(
     base_url: str,
     func_info: Dict[str, Any],
     log_file_handle=None,
-    lock=None
+    lock=None,
+    memory_mb: int = 256
 ):
     service_name = func_info["service_name"]
     host_header = f"{service_name}.default.127.0.0.1.sslip.io"
@@ -55,6 +56,7 @@ async def invoke_worker(
                 f"{latency_ms:.2f}",
                 status,
                 error_message,
+                memory_mb,
             ])
 
 
@@ -83,10 +85,10 @@ async def run_workload(
     lock = asyncio.Lock()
     if output_path:
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        log_file = open(output_path, "w", buffering=1)
+        log_file = open(output_path, "w", buffering=1, newline='')
         csv.writer(log_file).writerow([
             "timestamp", "function_id", "service_name",
-            "latency_ms", "status_code", "error",
+            "latency_ms", "status_code", "error", "memory_mb",
         ])
 
     active_tasks = set()
@@ -114,9 +116,10 @@ async def run_workload(
                         # Poisson inter-arrival time: wait ~ Exp(lambda)
                         wait_time = rng.exponential(1.0 / max(rate, 0.01))
                         if wait_time < 0.05:
+                            memory_mb = func.get("container_memory_mb", 256)
                             task = asyncio.create_task(
                                 invoke_worker(
-                                    client, base_url, func, log_file, lock,
+                                    client, base_url, func, log_file, lock, memory_mb,
                                 )
                             )
                             active_tasks.add(task)

@@ -33,13 +33,23 @@ class W2GradualGrowthProfile(WorkloadProfile):
 class W3BurstyProfile(WorkloadProfile):
     """W3: Bursty traffic with periodic 10x flash crowd spikes lasting 60s every 300s."""
 
-    def __init__(self, burst_multiplier: float = 10.0, burst_duration: float = 60.0, burst_interval: float = 300.0):
+    def __init__(self, burst_multiplier: float = 10.0, burst_duration: float = 60.0, burst_interval: float = 300.0, warmup_duration: float = 0.0):
         self.burst_multiplier = burst_multiplier
         self.burst_duration = burst_duration
         self.burst_interval = burst_interval
+        self.warmup_duration = warmup_duration  # Optional gentle ramp-up before first burst
 
     def get_rate(self, t: float, base_rate: float, func_index: int = 0, total_funcs: int = 12) -> float:
-        cycle_pos = t % self.burst_interval
+        # Optional warmup period with gradual ramp
+        if self.warmup_duration > 0 and t < self.warmup_duration:
+            # Ramp from 0.5x to 1x base_rate during warmup
+            warmup_factor = 0.5 + 0.5 * (t / self.warmup_duration)
+            return max(base_rate * warmup_factor, 0.01)
+        
+        # Adjust time to account for warmup
+        adjusted_t = t - self.warmup_duration if self.warmup_duration > 0 else t
+        cycle_pos = adjusted_t % self.burst_interval
+        
         if cycle_pos < self.burst_duration:
             return base_rate * self.burst_multiplier
         return max(base_rate, 0.01)
@@ -84,7 +94,8 @@ def get_profile(name: str, **kwargs) -> WorkloadProfile:
         mult = kwargs.get("burst_multiplier", 10.0)
         dur = kwargs.get("burst_duration", 60.0)
         inv = kwargs.get("burst_interval", 300.0)
-        return W3BurstyProfile(burst_multiplier=mult, burst_duration=dur, burst_interval=inv)
+        warmup = kwargs.get("warmup_duration", 0.0)
+        return W3BurstyProfile(burst_multiplier=mult, burst_duration=dur, burst_interval=inv, warmup_duration=warmup)
     elif name_upper == "W4":
         period = kwargs.get("period", 600.0)
         amp = kwargs.get("amplitude", 0.8)

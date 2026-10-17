@@ -21,6 +21,14 @@ for dir in $FOLDERS; do
   name=$(basename "$dir")
   tag="granuwarm/${name}:v1"
 
+  if [ "$name" = "f6_ml_inference" ] || [ "$name" = "f7_sentiment_analysis" ]; then
+    echo "-----------------------------------------"
+    echo "SKIPPING: $name"
+    echo "-----------------------------------------"
+    echo ""
+    continue
+  fi
+
   echo "-----------------------------------------"
   echo "[$((COUNT+1))] $name"
   echo "-----------------------------------------"

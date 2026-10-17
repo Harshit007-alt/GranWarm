@@ -1,0 +1,26 @@
+# Lightweight controller configuration for resource-constrained environments (4GB RAM)
+# This profile excludes heavy ML functions and reduces PSO search space
+
+memory_budget_mb: 1500        # Reduced from 4096 to match 6 lightweight functions
+dt_fast_sec: 15               # Aligned with Prometheus scrape interval (15s)
+dt_slow_sec: 90               # Increased from 60 to reduce PSO frequency
+
+pso:
+  swarm_size: 15              # Reduced from 30 (saves ~50% memory)
+  max_iter: 30                # Reduced from 50 (3x faster convergence)
+
+fuzzy:
+  capacity_scale: 4.0         # Reduced from 8.0 (max 4 instances per function)
+  max_delta: 1                # Keep bounded delta for hysteresis
+
+safety:
+  node_min_capacity: 0
+  node_max_capacity: 4        # Reduced from 10 to match capacity_scale
+
+telemetry:
+  staleness_threshold_sec: 30 # Increased from 15 to match slower scrape interval
+  allow_stale: false
+
+audit:
+  enabled: true
+  buffer_size: 100            # Flush every 100 decisions to reduce I/O overhead

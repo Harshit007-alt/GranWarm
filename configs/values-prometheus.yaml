@@ -1,10 +1,20 @@
 grafana:
   enabled: false
 
+alertmanager:
+  enabled: false
+
 prometheus:
   prometheusSpec:
-    scrapeInterval: 2s
-    evaluationInterval: 2s
+    # Increased from 2s to 15s for laptop resource constraints
+    # Controller runs every 10s (fast loop), so 15s scraping is adequate
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    
+    # Keep only 1 hour of data to reduce memory usage
+    retention: 1h
+    walCompression: true
+    
     livenessProbe:
       initialDelaySeconds: 120
       periodSeconds: 30
@@ -15,9 +25,20 @@ prometheus:
       periodSeconds: 15
       failureThreshold: 6
       timeoutSeconds: 10
+    
+    # Reduced resource limits for 4GB laptop environment
     resources:
       requests:
-        memory: 512Mi
-        cpu: 200m
+        memory: 256Mi
+        cpu: 100m
       limits:
-        memory: 1500Mi
+        memory: 512Mi
+        cpu: 500m
+    
+    # Minimal storage for laptop testing
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          resources:
+            requests:
+              storage: 2Gi

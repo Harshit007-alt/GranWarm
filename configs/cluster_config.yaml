@@ -17,9 +17,6 @@ nodes:
       - containerPort: 443
         hostPort: 443
         protocol: TCP
-  - role: worker
-    image: kindest/node:v1.31.0
-  - role: worker
-    image: kindest/node:v1.31.0
+  # Reduced from 3 workers to 1 for laptop resource constraints (4GB RAM)
   - role: worker
     image: kindest/node:v1.31.0

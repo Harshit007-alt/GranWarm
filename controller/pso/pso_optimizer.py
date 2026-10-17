@@ -142,7 +142,35 @@ class DiscreteConstrainedPSO:
         positions: np.ndarray,
         metrics_prior: Optional[Dict[str, float]],
     ) -> np.ndarray:
-        """Evaluates composite objective J(x) for all particles."""
+        """Evaluates composite objective J(x) for all particles.
+        
+        If metrics_prior is provided and contains observed metrics, uses those.
+        Otherwise falls back to analytic surrogates.
+        
+        Args:
+            positions: Particle positions (S x K)
+            metrics_prior: Optional dict with observed metrics:
+                - "mode": "observed" or "analytic"
+                - "latency": observed latencies per function
+                - "cold_starts": observed cold-start counts
+                - "memory": observed memory usage
+                - "sla_violations": observed SLA violations
+                
+        Returns:
+            Fitness vector (S,) - lower is better
+        """
+        # Check if we have observed metrics
+        if metrics_prior and metrics_prior.get("mode") == "observed":
+            return self._compute_fitness_observed(positions, metrics_prior)
+        else:
+            return self._compute_fitness_analytic(positions)
+    
+    def _compute_fitness_analytic(self, positions: np.ndarray) -> np.ndarray:
+        """Original analytic surrogate fitness (used when no observed metrics).
+        
+        This is the fallback when we don't have real observations yet,
+        or in simulation mode.
+        """
         mem_used = np.dot(positions, self.node_memories)
 
         violation = np.maximum(0.0, mem_used - self.M_budget)
@@ -161,6 +189,63 @@ class DiscreteConstrainedPSO:
             + self.w_C * C_bar
             + self.w_M * M_hat
             + self.w_S * S_bar
+            + penalty
+        )
+        return J
+    
+    def _compute_fitness_observed(
+        self, positions: np.ndarray, metrics: Dict[str, float]
+    ) -> np.ndarray:
+        """Compute fitness from observed metrics (used when available).
+        
+        Uses real observed latency, cold-starts, memory, and SLA violations
+        instead of analytic surrogates.
+        
+        Args:
+            positions: Particle positions (S x K)
+            metrics: Dict with observed metrics:
+                - "latency_total_ms": total observed latency across functions
+                - "cold_start_total": total cold-starts observed
+                - "memory_used_mb": total memory used
+                - "sla_violations_total": total SLA violations
+                
+        Returns:
+            Fitness vector (S,) - lower is better
+        """
+        # Extract observed metrics with defaults
+        latency_total = metrics.get("latency_total_ms", 100.0)
+        cold_start_total = metrics.get("cold_start_total", 5.0)
+        memory_used_mb = metrics.get("memory_used_mb", 1000.0)
+        sla_violations = metrics.get("sla_violations_total", 0.0)
+        
+        # Normalize latency (lower is better)
+        # Assume baseline latency scales inversely with allocation
+        L_bar = latency_total / (np.mean(positions, axis=1) + 1.0)
+        L_bar_norm = L_bar / np.max(L_bar + 1e-6)
+        
+        # Cold-start cost (lower is better)
+        # More allocation = fewer cold-starts
+        C_bar = cold_start_total / (np.mean(positions, axis=1) + 1.0)
+        C_bar_norm = C_bar / np.max(C_bar + 1e-6)
+        
+        # Memory pressure (lower is better)
+        mem_used = np.dot(positions, self.node_memories)
+        M_hat = mem_used / max(self.M_budget, 1.0)
+        
+        # SLA violations (lower is better)
+        S_bar = sla_violations / (np.mean(positions, axis=1) + 1.0)
+        S_bar_norm = S_bar / np.max(S_bar + 1e-6)
+        
+        # Budget violation penalty (hard constraint)
+        violation = np.maximum(0.0, mem_used - self.M_budget)
+        penalty = self.rho * (violation / max(self.M_budget, 1.0)) ** 2
+        
+        # Composite objective
+        J = (
+            self.w_L * L_bar_norm
+            + self.w_C * C_bar_norm
+            + self.w_M * M_hat
+            + self.w_S * S_bar_norm
             + penalty
         )
         return J

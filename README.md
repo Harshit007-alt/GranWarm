@@ -262,24 +262,40 @@ profiles and fixed random seeds.
 | `scripts/` | Cluster setup, cleanup, plotting, and reporting |
 | `docs/architecture/` | Target design, current implementation, and migration plan |
 
-## Getting started
-
-The simulator is the first target-compatible execution environment:
+### Running Simulation Experiments
 
 ```bash
+# Run quick tests
 python -m pytest tests -q
+
+# Run single simulation experiment
 python simulator/run_sim.py \
   --workload W3 \
   --policy granuwarm \
   --duration 300 \
   --seed 42
+
+# Run full 150-experiment simulation matrix
+python -m experiments.run_experiment --full
 ```
 
-For the live Kubernetes path, see the implementation and migration documents
-before enabling actuation:
+### Running Live Kubernetes Experiments
 
-- [Current architecture](docs/architecture/current-architecture.md)
-- [Architecture gap analysis and roadmap](docs/architecture/gap-analysis-and-roadmap.md)
+```bash
+# Deploy services to Knative (using pre-built local images)
+./scripts/deploy_simple_services.sh
+
+# Run end-to-end live experiment (traffic + controller actuation)
+./run_one_experiment.sh 60 15
+```
+
+### Generating Publication Figures & Tables
+
+Generate all publication-ready plots (Figures 1–5), LaTeX tables (8–16), and Wilcoxon significance tests directly from real experimental data (no mocks):
+
+```bash
+python scripts/plot_results.py
+```
 
 ## Research questions
 

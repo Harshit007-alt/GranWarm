@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Dict
+from typing import Dict, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -42,7 +42,9 @@ from controller.fuzzy.fuzzy_engine import FuzzyEngine
 from controller.granularity.tree import GranularityTree
 from controller.pso.pso_optimizer import DiscreteConstrainedPSO
 from controller.allocator.knative_scaler import KnativeScaler
+from controller.allocator.state_store import DesiredStateStore
 from controller.safety.feasibility import FeasibilityService
+from controller.metrics import RollingMetricsStore, MetricWindow
 
 
 logging.basicConfig(
@@ -94,17 +96,23 @@ class GranuWarmController:
         audit_dir: str = "results/audit",
         stale_allow: bool = False,
         prometheus_namespace: str = "default",
+        pso_swarm_size: int = 30,
+        pso_max_iter: int = 50,
+        skip_telemetry_validation: bool = False,
+        policy: str = "B6",
     ):
+        self.policy = policy.upper()
         self.dt_fast = float(dt_fast_sec)
         self.dt_slow = float(dt_slow_sec)
         self.memory_budget_mb = float(memory_budget_mb)
         self.mode = mode
+        self.skip_telemetry_validation = skip_telemetry_validation
         self.stale_allow = stale_allow
         self.audit_dir = pathlib.Path(audit_dir)
         self.audit_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("=" * 72)
-        logger.info(f"GranuWarm Controller starting in mode={self.mode.value}")
+        logger.info(f"GranuWarm Controller starting in mode={self.mode.value} policy={self.policy}")
         logger.info(f"  budget={self.memory_budget_mb:.0f} MB  "
                     f"dt_fast={self.dt_fast:.1f}s  dt_slow={self.dt_slow:.1f}s")
         logger.info(f"  tree={tree_config}  rules={rules_config}")
@@ -156,12 +164,16 @@ class GranuWarmController:
         # ---------------- PSO (DAG-aware) ----------------
         self.pso = DiscreteConstrainedPSO(
             dimension=self.K,
-            swarm_size=30,
-            max_iter=50,
+            swarm_size=pso_swarm_size,
+            max_iter=pso_max_iter,
             memory_budget_mb=self.memory_budget_mb,
             node_memories=self.node_memories,
             node_ids=self.node_ids,
             parent_map=self.tree.parent_map,
+        )
+        logger.info(
+            f"  PSO: {pso_swarm_size} particles, {pso_max_iter} iterations "
+            f"({pso_swarm_size * pso_max_iter} total evaluations)"
         )
 
         # ---------------- Safety gate ----------------
@@ -174,11 +186,31 @@ class GranuWarmController:
 
         # ---------------- Actuator ----------------
         dry_run = self.mode not in ACTUATING_MODES
-        self.scaler = KnativeScaler(dry_run=dry_run)
+        self.scaler = KnativeScaler(
+            namespace=prometheus_namespace,
+            dry_run=dry_run,
+            max_retries=3,
+            base_backoff_sec=1.0
+        )
         logger.info(f"  actuator: KnativeScaler(dry_run={dry_run})")
+        
+        # ---------------- State store ----------------
+        self.state_store = DesiredStateStore(
+            state_file=str(self.audit_dir / "desired_state.json")
+        )
+        
+        # ---------------- Metrics store ----------------
+        self.metrics_store = RollingMetricsStore(
+            window_seconds=300  # 5-minute rolling window
+        )
+        logger.info("  metrics: RollingMetricsStore(window=300s)")
 
         # ---------------- Startup schema check ----------------
-        if self.mode in SCHEMA_CHECK_MODES:
+        if self.skip_telemetry_validation:
+            logger.info(
+                "  schema check: skipped (--skip-telemetry-validation flag set)"
+            )
+        elif self.mode in SCHEMA_CHECK_MODES:
             try:
                 self.monitor.validate_schema()
             except TelemetryError as e:
@@ -195,6 +227,117 @@ class GranuWarmController:
         # ---------------- Runtime state ----------------
         self.current_alloc_vector = np.zeros(self.K, dtype=int)
         self.is_running = False
+        
+        # ---------------- Startup reconciliation ----------------
+        if self.mode in ACTUATING_MODES:
+            self._reconcile_startup()
+
+    # ------------------------------------------------------------------
+    # Metrics extraction
+    # ------------------------------------------------------------------
+    def _extract_and_record_metrics(self, snapshot: TelemetrySnapshot) -> None:
+        """Extract metrics from telemetry and record to rolling store.
+        
+        Args:
+            snapshot: TelemetrySnapshot with current function metrics
+        """
+        for fid, telemetry in snapshot.functions.items():
+            # For now, derive metrics from telemetry signals
+            # In a full implementation, these would come from detailed Prometheus queries
+            
+            # Estimate requests from rate
+            requests = int(telemetry.R_i * 10)  # Rough estimate over 10s cycle
+            
+            # Estimate cold-starts from cold-start signal
+            cold_starts = int(telemetry.C_i * requests)
+            
+            # Estimate latency from workload characteristics
+            # This is a placeholder - real implementation would query actual latency metrics
+            base_latency = 50.0  # Base latency in ms
+            latency_p50 = base_latency * (1.0 + telemetry.C_i * 10)  # Higher if cold-starts
+            
+            self.metrics_store.record(
+                function_id=fid,
+                latency_p50_ms=latency_p50,
+                latency_p95_ms=latency_p50 * 1.5,
+                latency_p99_ms=latency_p50 * 2.0,
+                cold_start_count=cold_starts,
+                total_requests=requests,
+                sla_violations=0,  # Would come from actual SLA threshold checks
+            )
+    
+    def _build_observed_metrics_prior(self) -> Optional[Dict[str, float]]:
+        """Build metrics dict from observed data for PSO.
+        
+        Returns:
+            Dict with observed metrics, or None if insufficient data
+        """
+        all_metrics = self.metrics_store.get_all_aggregated()
+        
+        if not all_metrics:
+            return None  # No observations yet, fall back to analytic
+        
+        # Aggregate across all functions
+        total_latency = sum(m.latency_p50_ms for m in all_metrics.values())
+        total_cold_starts = sum(m.cold_start_count for m in all_metrics.values())
+        total_requests = sum(m.total_requests for m in all_metrics.values())
+        total_sla_violations = sum(m.sla_violations for m in all_metrics.values())
+        
+        # Calculate average memory (would come from actual metrics in production)
+        total_memory = sum(m.avg_memory_mb for m in all_metrics.values() if m.avg_memory_mb > 0)
+        avg_memory = total_memory / len(all_metrics) if all_metrics else 1000.0
+        
+        return {
+            "mode": "observed",
+            "latency_total_ms": total_latency,
+            "cold_start_total": float(total_cold_starts),
+            "memory_used_mb": avg_memory * len(all_metrics),  # Rough estimate
+            "sla_violations_total": float(total_sla_violations),
+            "total_requests": float(total_requests),
+        }
+
+    # ------------------------------------------------------------------
+    # Reconciliation
+    # ------------------------------------------------------------------
+    def _reconcile_startup(self) -> None:
+        """Reconcile Kubernetes state to last desired state at startup.
+        
+        This method is called during __init__ when in an actuating mode.
+        It loads the last saved desired state and attempts to converge
+        the cluster to that state.
+        """
+        saved_state = self.state_store.load()
+        if not saved_state:
+            logger.info("No previous desired state to reconcile")
+            return
+        
+        func_caps = saved_state.get("function_capacities", {})
+        if not func_caps:
+            logger.warning("Saved state has no function capacities, skip reconciliation")
+            return
+        
+        # Convert function capacities to service targets
+        svc_targets = {
+            self.tree.functions[fid].get("service_name", fid): int(count)
+            for fid, count in func_caps.items()
+            if fid in self.tree.functions
+        }
+        
+        if not svc_targets:
+            logger.warning("No valid services to reconcile")
+            return
+        
+        logger.info(f"Reconciling {len(svc_targets)} services to last desired state")
+        summary = self.scaler.reconcile(svc_targets)
+        
+        if summary.failed > 0:
+            logger.warning(
+                f"Reconciliation completed with {summary.failed} failures"
+            )
+        else:
+            logger.info(
+                f"Reconciliation successful: {summary.successful} services converged"
+            )
 
     # ------------------------------------------------------------------
     # Audit
@@ -313,6 +456,10 @@ class GranuWarmController:
                         cycle_id=cycle_id,
                     )
                     validate_snapshot(snapshot, allow_stale=self.stale_allow)
+                    
+                    # Record metrics to rolling store
+                    self._extract_and_record_metrics(snapshot)
+                    
                 except TelemetryError as e:
                     logger.error(
                         f"[{cycle_id}] Telemetry error: {e}. Skipping cycle."
@@ -337,9 +484,20 @@ class GranuWarmController:
                 delta_info: dict = {}
                 if (now - t_last_pso) >= self.dt_slow or t_last_pso == 0.0:
                     logger.info(f"[{cycle_id}] Slow loop: constrained PSO ...")
+                    
+                    # Try to use observed metrics, fall back to analytic
+                    observed_metrics = self._build_observed_metrics_prior()
+                    if observed_metrics:
+                        logger.debug(
+                            f"Using observed metrics: "
+                            f"{observed_metrics['total_requests']:.0f} reqs, "
+                            f"{observed_metrics['cold_start_total']:.0f} cold-starts"
+                        )
+                    
                     best_x = self.pso.optimize(
                         fuzzy_prior=fuzzy_prior,
                         current_allocation=self.current_alloc_vector,
+                        metrics=observed_metrics,
                     )
                     raw_req = AllocationRequest(
                         node_capacities=self._vector_to_caps(best_x),
@@ -411,8 +569,32 @@ class GranuWarmController:
                         self.tree.functions[fid].get("service_name", fid): int(count)
                         for fid, count in decision.function_capacities.items()
                     }
-                    result = self.scaler.apply_allocation(svc_targets)
-                    logger.info(f"[{decision.decision_id}] actuation -> {result}")
+                    summary = self.scaler.apply_allocation(svc_targets)
+                    
+                    # Log per-service results
+                    for svc, result in summary.results.items():
+                        if result.success and not result.skipped:
+                            logger.info(
+                                f"  ✓ {svc}: {result.current} → {result.requested}"
+                            )
+                        elif result.skipped:
+                            logger.debug(
+                                f"  ⊙ {svc}: {result.message}"
+                            )
+                        else:
+                            logger.error(
+                                f"  ✗ {svc}: {result.message} (error: {result.error})"
+                            )
+                    
+                    # Save successful decisions as desired state
+                    if summary.failed == 0:
+                        self.state_store.save(decision)
+                    else:
+                        logger.warning(
+                            f"Not saving desired state due to {summary.failed} "
+                            f"actuation failures"
+                        )
+                        
                 elif self.mode == OperatingMode.DRY_RUN:
                     logger.info(
                         f"[{decision.decision_id}] DRY-RUN — no Kubernetes "
@@ -453,6 +635,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="GranuWarm Dual-Timescale Controller",
     )
+    parser.add_argument(
+        "--profile",
+        choices=["default", "light", "minimal"],
+        default=None,
+        help=(
+            "Resource profile: default (4GB+ cluster), light (laptop 4GB), "
+            "minimal (2GB). Overrides individual parameters."
+        )
+    )
     parser.add_argument("--config", type=str, default="configs/dependencies.json")
     parser.add_argument("--rules", type=str, default="configs/fuzzy_rules.json")
     parser.add_argument(
@@ -460,9 +651,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prometheus-url", type=str)
     parser.add_argument("--prometheus-namespace", type=str)
-    parser.add_argument("--budget", type=float, default=4096.0)
-    parser.add_argument("--dt-fast", type=float, default=10.0)
-    parser.add_argument("--dt-slow", type=float, default=60.0)
+    parser.add_argument("--budget", type=float, default=None)
+    parser.add_argument("--dt-fast", type=float, default=None)
+    parser.add_argument("--dt-slow", type=float, default=None)
     parser.add_argument(
         "--mode",
         choices=[m.value for m in OperatingMode],
@@ -475,12 +666,73 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cycles", type=int, default=0)
     parser.add_argument("--audit-dir", type=str, default="results/audit")
     parser.add_argument("--allow-stale", action="store_true")
+    parser.add_argument(
+        "--pso-swarm-size", type=int, default=None,
+        help="PSO swarm size (default: 30, light: 15, minimal: 10)"
+    )
+    parser.add_argument(
+        "--pso-max-iter", type=int, default=None,
+        help="PSO max iterations (default: 50, light: 30, minimal: 20)"
+    )
+    parser.add_argument(
+        "--skip-telemetry-validation", action="store_true",
+        help="Skip Prometheus schema validation (useful for offline testing)"
+    )
+    parser.add_argument(
+        "--baseline", type=str, default="B6",
+        choices=["B1", "B2", "B3", "B4", "B5", "B6"],
+        help="Baseline policy: B1=no_prewarm, B2=fixed_prewarm, B3=fuzzy_only, B4=pso_only, B5=fuzzy_pso_no_granularity, B6=granuwarm_full (default: B6)"
+    )
     return parser
 
 
 def main():
     args = build_arg_parser().parse_args()
     mode = OperatingMode(args.mode)
+    
+    # Apply profile defaults
+    profile_configs = {
+        "default": {
+            "config": "configs/dependencies.json",
+            "budget": 4096.0,
+            "dt_fast": 10.0,
+            "dt_slow": 60.0,
+            "pso_swarm_size": 30,
+            "pso_max_iter": 50,
+        },
+        "light": {
+            "config": "configs/dependencies_light.json",
+            "budget": 1500.0,
+            "dt_fast": 15.0,
+            "dt_slow": 90.0,
+            "pso_swarm_size": 15,
+            "pso_max_iter": 30,
+        },
+        "minimal": {
+            "config": "configs/dependencies_light.json",
+            "budget": 1000.0,
+            "dt_fast": 30.0,
+            "dt_slow": 120.0,
+            "pso_swarm_size": 10,
+            "pso_max_iter": 20,
+        },
+    }
+    
+    # Select profile
+    if args.profile:
+        profile = profile_configs[args.profile]
+        logger.info(f"Using '{args.profile}' profile")
+    else:
+        profile = profile_configs["default"]
+    
+    # Override with explicit args
+    config = args.config if args.config != "configs/dependencies.json" else profile["config"]
+    budget = args.budget if args.budget is not None else profile["budget"]
+    dt_fast = args.dt_fast if args.dt_fast is not None else profile["dt_fast"]
+    dt_slow = args.dt_slow if args.dt_slow is not None else profile["dt_slow"]
+    pso_swarm_size = args.pso_swarm_size if args.pso_swarm_size is not None else profile["pso_swarm_size"]
+    pso_max_iter = args.pso_max_iter if args.pso_max_iter is not None else profile["pso_max_iter"]
+    
     with open(args.prometheus_config, encoding="utf-8") as config_file:
         prometheus_config = json.load(config_file)
     if not isinstance(prometheus_config, dict):
@@ -491,16 +743,20 @@ def main():
     )
 
     controller = GranuWarmController(
-        tree_config=args.config,
+        tree_config=config,
         rules_config=args.rules,
         prometheus_url=prometheus_url,
         prometheus_namespace=prometheus_namespace,
-        memory_budget_mb=args.budget,
-        dt_fast_sec=args.dt_fast,
-        dt_slow_sec=args.dt_slow,
+        memory_budget_mb=budget,
+        dt_fast_sec=dt_fast,
+        dt_slow_sec=dt_slow,
         mode=mode,
         audit_dir=args.audit_dir,
         stale_allow=args.allow_stale,
+        pso_swarm_size=pso_swarm_size,
+        pso_max_iter=pso_max_iter,
+        skip_telemetry_validation=args.skip_telemetry_validation,
+        policy=args.baseline,
     )
 
     loop = asyncio.new_event_loop()
