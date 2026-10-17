@@ -1,8 +1,8 @@
 === GranuWarm Wilcoxon Signed-Rank Significance Tests ===
 Hypothesis: GranuWarm (B6) achieves strictly lower composite cost than baseline.
 
-B6 vs B1 (N=25): Statistic W = 0.0, p-value = 6.145161e-06 (Statistically Significant (p < 0.05))
-B6 vs B2 (N=25): Statistic W = 0.0, p-value = 6.145161e-06 (Statistically Significant (p < 0.05))
-B6 vs B3 (N=25): Statistic W = 0.0, p-value = 6.145161e-06 (Statistically Significant (p < 0.05))
-B6 vs B4 (N=25): Statistic W = 0.0, p-value = 6.145161e-06 (Statistically Significant (p < 0.05))
-B6 vs B5 (N=25): Statistic W = 0.0, p-value = 6.145161e-06 (Statistically Significant (p < 0.05))
+B6 vs B1 (N=5): Statistic W = 0.0, p-value = 2.155722e-02 (Statistically Significant (p < 0.05))
+B6 vs B2 (N=5): Statistic W = 10.0, p-value = 7.499079e-01 (Not Significant)
+B6 vs B3 (N=5): Statistic W = 0.0, p-value = 2.155722e-02 (Statistically Significant (p < 0.05))
+B6 vs B4 (N=5): Statistic W = 0.0, p-value = 2.155722e-02 (Statistically Significant (p < 0.05))
+B6 vs B5 (N=5): Statistic W = 0.0, p-value = 2.155722e-02 (Statistically Significant (p < 0.05))

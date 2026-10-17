@@ -103,6 +103,11 @@ def plot_figure_2_csr(df: pd.DataFrame):
 
 
 def plot_figure_3_temporal():
+    """Figure 3: Real Temporal Adaptation Tracking for B6 on W5 (regime-switching workload)."""
+    # For summary-based plots, we skip temporal tracking since it requires raw time-series data
+    # This would need individual raw CSV files with timestamps
+    print("  Skipping Figure 3 (requires time-series data from raw CSVs)")
+    return
     """Figure 3: Temporal Dynamic Adaptation Under Bursty Traffic (W3).
     
     Uses REAL per-request traces from W3_B6_seed42.csv and W3_B2_seed42.csv (no mocks).
