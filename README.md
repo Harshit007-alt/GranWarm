@@ -1,333 +1,302 @@
 # GranuWarm
 
-**Adaptive dependency-aware prewarming for serverless functions under
-non-stationary workloads**
+**Adaptive dependency-aware pre-warming for serverless functions under
+non-stationary workloads, using fuzzy-controlled constrained Particle Swarm
+Optimization.**
 
-GranuWarm is a closed-loop serverless resource-management architecture that
-combines workload telemetry, fuzzy control, dependency-aware warm layers, and
-constrained particle swarm optimization (PSO) to reduce cold-start latency
-under a cluster memory budget.
+GranuWarm is a closed-loop serverless resource-management framework that
+combines workload telemetry, Mamdani fuzzy inference, a dependency-granularity
+tree, and a constrained discrete Particle Swarm Optimizer (PSO) to reduce
+cold-start latency under a cluster memory budget.
 
-This README describes the **target architecture**: the end-state system that
-the project is designed to implement. The implementation inventory and the
-steps required to reach this design are documented separately:
+This README describes **what the repository actually implements today**, not an
+aspirational end state.
 
-- [Current architecture](docs/architecture/current-architecture.md)
-- [Architecture gap analysis and roadmap](docs/architecture/gap-analysis-and-roadmap.md)
+---
 
-## Target architecture at a glance
+## Two paths
 
-```text
-                         +-----------------------------+
-                         |        Workload sources     |
-                         |  clients, traces, profiles  |
-                         +--------------+--------------+
-                                        |
-                                        v
-                         +-----------------------------+
-                         |   Serverless runtime plane  |
-                         |  Knative services/functions |
-                         +--------------+--------------+
-                                        |
-                 metrics                 | requests / latency
-                                        v
- +------------------+       +-----------------------------+
- | Prometheus        |------>| Telemetry and feature       |
- | metrics store     |       | extraction                 |
- +------------------+       | rate, trend, cold starts,  |
-                            | memory, SLA pressure        |
-                            +--------------+--------------+
-                                           |
-                                           v
-                            +-----------------------------+
-                            | Fast control loop            |
-                            | Fuzzy inference              |
-                            | every 10 seconds             |
-                            +--------------+--------------+
-                                           |
-                                           v
-                            +-----------------------------+
-                            | Dependency-granularity       |
-                            | graph / shared warm-layer    |
-                            | projection                  |
-                            +--------------+--------------+
-                                           |
-                         fuzzy prior       v
-                            +-----------------------------+
-                            | Slow global optimizer        |
-                            | constrained discrete PSO    |
-                            | every 60 seconds             |
-                            +--------------+--------------+
-                                           |
-                                           v
-                            +-----------------------------+
-                            | Policy and safety layer      |
-                            | hard memory budget           |
-                            | bounds, validation,          |
-                            | hysteresis, reconciliation   |
-                            +--------------+--------------+
-                                           |
-                                           v
-                            +-----------------------------+
-                            | Allocation actuator          |
-                            | shared layers + function     |
-                            | warm capacity                |
-                            +--------------+--------------+
-                                           |
-                                           v
-                         +-----------------------------+
-                         | Knative/Kubernetes runtime   |
-                         | deploy, prewarm, scale,       |
-                         | observe, reconcile            |
-                         +-----------------------------+
-```
+The repository contains two independent execution paths that share the same
+core algorithms (fuzzy engine, granularity tree, constrained PSO, feasibility
+gate) but differ in how they obtain telemetry and how they actuate:
 
-## Target design principles
+| Path | Status | Purpose | Entry point |
+| --- | --- | --- | --- |
+| **Offline simulation** | Primary, complete | Event-driven, trace-driven evaluation of all six baseline configurations across five workload regimes. This is the **research focus** and the source of every quantitative result in the paper. | `simulator/run_sim.py`, `experiments/run_experiment.py`, `reproduce.py` |
+| **Live Kubernetes** | Secondary, functional | A dual-timescale controller that reads Prometheus telemetry and actuates Knative `min-scale` on a real cluster. | `controller/main.py`, `configure_baseline.py`, `scripts/deploy_*.sh` |
 
-1. **Closed loop:** every allocation decision is based on observed workload
-   and runtime state.
-2. **Two timescales:** fuzzy control reacts quickly; PSO performs slower global
-   re-optimization.
-3. **Dependency awareness:** shared runtimes and libraries are represented as
-   reusable warm layers rather than treating every function as unrelated.
-4. **Budget safety:** no allocation may violate the configured memory budget.
-5. **Safe actuation:** changes are bounded, hysteresis-protected,
-   idempotent, observable, and reconciled after failures.
-6. **Simulation/live parity:** the simulator and the live controller use the
-   same telemetry, allocation, memory-accounting, and dependency semantics.
-7. **Reproducibility:** every experiment records configuration, code revision,
-   dependency versions, workload profile, and random seeds.
+The offline path is self-contained and needs no cluster. All published figures,
+tables, and statistical tests are reproducible from the offline path alone.
 
-## Target components
+---
 
-### 1. Runtime plane
+## How GranuWarm works
 
-The runtime plane hosts heterogeneous Python and Node.js functions as Knative
-Services on Kubernetes. Each function has:
+The framework is built around three coordinated mechanisms, each implemented as
+real (non-stubbed) code:
 
-- an immutable image and version;
-- a service identity;
-- runtime and dependency metadata;
-- memory and startup-cost estimates;
-- an allocation target that can be reconciled by the controller.
+1. **Mamdani fuzzy inference system** (`controller/fuzzy/fuzzy_engine.py`,
+   `configs/fuzzy_rules.json`) — a 27-rule FIS with triangular/trapezoidal
+   membership functions, min-AND antecedents, max aggregation, and centroid
+   defuzzification. It maps four normalized workload signals — invocation
+   intensity `R`, traffic trend `T`, cold-start pressure `C`, memory pressure
+   `M` — to a per-function warm-capacity recommendation `P ∈ [0, 1]` on a fast
+   10 s loop.
+2. **Dependency-granularity tree** (`controller/granularity/tree.py`,
+   `configs/dependencies.json`) — decomposes the 12-function fleet into
+   hierarchical, shareable layers (runtimes → library bundles → function leaf
+   code). It projects per-function fuzzy recommendations onto tree nodes via
+   the max-projection `P_k = max{ P_i : f_i depends on v_k }`, enforces
+   parent/child dependency constraints, and accounts shared layers only once
+   per family.
+3. **Constrained discrete PSO** (`controller/pso/pso_optimizer.py`) — a
+   vectorized integer PSO (30 particles, 50 iterations, inertia decaying
+   0.7 → 0.4, c1 = c2 = 1.5) that searches the allocation vector across
+   granularity-tree nodes. It uses informed seeding from the fuzzy prior,
+   Deb's parameter-less constraint penalty for budget violations, and DAG
+   projection to keep particles feasible by construction.
 
-The target design introduces a runtime abstraction for shared warm layers.
-Layer nodes may represent a runtime, shared library bundle, native library
-bundle, or function-specific code. The actuator must translate layer
-allocations into real runtime resources or an explicitly supported equivalent.
+A **safety/feasibility gate** (`controller/safety/feasibility.py`) validates
+every candidate allocation against bounds, dependency constraints, and the hard
+memory budget, and repairs infeasible solutions with a proportional shrink
+before they reach actuation.
 
-### 2. Telemetry plane
+---
 
-Prometheus collects the signals needed by the controller. For each function
-and shared layer, the telemetry adapter produces a typed feature record:
+## The offline simulation path (research focus)
 
-| Signal | Meaning | Domain |
+### Engine
+
+`simulator/env.py` (`SimEnvironment`) is a time-stepped serverless simulator
+that processes discrete arrival events chronologically. It models:
+
+- a **container state machine** (`COLD → WARM → BUSY → WARM → RECLAIMED`);
+- **warm hits**, **cold starts / scale-out**, and **concurrency reuse** of busy
+  containers (with a small per-extra-request queue penalty);
+- **partial warm starts** — when shared granularity-tree nodes on a function's
+  dependency path are pre-warmed, their init time is deducted from the
+  cold-start latency, floored at the warm-start latency
+  (`_compute_granularity_cold_delay`);
+- a **hard memory budget** — new containers that would exceed the budget
+  trigger eviction of idle warm containers (above `min_scale` first, then other
+  functions'), and if still over budget the request queues behind the
+  earliest-finishing busy container, capped at a 15 s platform timeout;
+- **SLA violations** (`latency > sla_threshold_ms`); and
+- **shared-layer vs. isolated memory accounting** — B6 counts each shared
+  runtime/library layer once per family, while B1–B5 count every container's
+  full footprint independently.
+
+The engine is driven by `simulator/run_sim.py`, which advances in `dt = 0.5 s`
+steps, generates Poisson arrivals per step from the active workload profile
+(`rng.poisson(rate · dt)`), scatters them uniformly within the interval, sorts
+them chronologically, and dispatches each to `step_invoke`. Every 10 simulated
+seconds the control loop synthesizes telemetry signals from the profile and
+current memory, calls the active policy's `compute_allocation`, and applies
+the resulting pre-warm targets.
+
+### Six baseline configurations (ablation)
+
+All six are real, distinct policies in `baselines/`, subclassing
+`base_policy.py`:
+
+| ID | Policy | What it does |
 | --- | --- | --- |
-| `R_i` | Invocation intensity | `[0, 1]` |
-| `T_i` | Traffic trend | `[-1, 1]` |
-| `C_i` | Cold-start pressure | `[0, 1]` |
-| `M` | Memory pressure | `[0, 1]` |
-| `L_i` | Observed latency features | milliseconds / quantiles |
-| `S_i` | SLA pressure | `[0, 1]` |
+| B1 | `b1_no_prewarm` | Scale-to-zero; `min_scale = 0` everywhere. |
+| B2 | `b2_fixed_prewarm` | Static one-container-per-function, budget-aware greedy packing (smaller footprint first). |
+| B3 | `b3_fuzzy_only` | Real FIS per function, scaled to instances, budget-aware greedy by fuzzy demand. No PSO, no tree. |
+| B4 | `b4_pso_only` | Constrained PSO over the 12-function space with a uniform prior. No fuzzy, no tree. |
+| B5 | `b5_fuzzy_pso_no_granularity` | Fuzzy-seeded PSO over the 12-function space. No granularity tree / DAG projection. |
+| B6 | `b6_granuwarm_full` | Full stack: FIS → tree max-projection → scaled fuzzy prior → constrained PSO over tree nodes → feasibility gate. The only policy returning a non-empty tree allocation. |
 
-Missing or stale required metrics are explicit controller errors. Synthetic
-fallback values are allowed only in simulator and test modes.
+### Workload regimes
 
-### 3. Fast fuzzy controller
+Five canonical regimes in `workload/profiles.py`, each 30 minutes by default:
 
-Every 10 seconds, the controller:
+- **W1 Stable** — constant Poisson arrivals.
+- **W2 Growth** — linear ramp (`slope = 0.002`).
+- **W3 Bursty** — 10× spikes lasting 60 s every 300 s (optional warmup ramp).
+- **W4 Periodic** — sinusoidal modulation (period 600 s, amplitude 0.8).
+- **W5 Non-stationary** — regime shift at `t = duration/2` with popularity
+  inversion across functions.
 
-1. reads a consistent telemetry snapshot;
-2. evaluates the 27-rule Mamdani fuzzy system;
-3. produces a normalized warm-capacity recommendation per function;
-4. projects those recommendations over the dependency graph; and
-5. submits a bounded allocation prior to the policy layer.
+### Benchmark functions
 
-### 4. Dependency-granularity graph
+Twelve heterogeneous functions F01–F12 are defined in
+`configs/dependencies.json` (lightweight web handlers, image manipulation, ML
+inference, data processing), each with `cold_start_ms` (150 ms for F01 up to
+8000 ms for F07), `warm_start_ms`, `container_memory_mb` (128–2048),
+`base_rate`, `leaf_node`, and a `dependency_path` through the granularity tree.
 
-The dependency graph contains parent-child relationships between shared
-layers and function leaves. A function can depend on multiple reusable layers.
-The graph is responsible for:
+---
 
-- determining which functions benefit from a warm layer;
-- calculating shared memory contribution;
-- calculating startup-time savings;
-- projecting function demand to layer demand; and
-- mapping a valid layer allocation back to executable function capacity.
+## Repository layout
 
-The simulator and live runtime must use the same graph semantics.
-
-### 5. Slow constrained PSO optimizer
-
-Every 60 seconds, PSO searches an integer allocation vector:
-
-```text
-x = [x_root, x_runtime, x_library, ..., x_function]
-```
-
-The target objective combines:
-
-```text
-latency + cold-start cost + idle-memory cost + SLA cost
-```
-
-subject to:
-
-```text
-total shared and function memory <= configured budget
-allocation bounds and dependency constraints
-```
-
-Infeasible candidates are rejected or repaired before actuation. Penalties may
-shape optimization, but they do not replace hard feasibility checks.
-
-### 6. Safety and actuation layer
-
-Before a change reaches Kubernetes, the policy layer must:
-
-- validate the complete allocation;
-- enforce minimum and maximum capacity;
-- enforce the memory budget;
-- reject stale decisions;
-- apply hysteresis to scale-down;
-- rate-limit changes;
-- emit an auditable decision record; and
-- reconcile desired state with observed state.
-
-The actuator then applies changes to shared warm-layer resources and Knative
-function services through an idempotent Kubernetes adapter.
-
-## Target control loop
-
-```text
-1. Observe
-   Prometheus -> typed telemetry snapshot
-
-2. React
-   telemetry -> fuzzy recommendation per function
-
-3. Project
-   function recommendations -> dependency-layer priorities
-
-4. Optimize
-   priorities + measured metrics -> feasible PSO allocation
-
-5. Validate
-   budget, bounds, freshness, hysteresis, safety policy
-
-6. Actuate
-   desired allocation -> Kubernetes/Knative resources
-
-7. Reconcile
-   observed state and metrics -> next control cycle
-```
-
-## Target operating modes
-
-| Mode | Purpose |
+| Area | Responsibility |
 | --- | --- |
-| Simulation | Fast, deterministic evaluation with the same policy interfaces |
-| Shadow | Read telemetry and calculate decisions without changing Kubernetes |
-| Dry run | Emit validated actuator operations without applying them |
-| Live | Apply decisions with retries, reconciliation, and audit logs |
-| Replay | Re-run a recorded telemetry trace for regression testing |
+| `simulator/` | Offline simulation engine (`env.py`) and CLI (`run_sim.py`). **Research focus.** |
+| `baselines/` | The six ablation policies B1–B6 + `base_policy.py`. |
+| `workload/` | Workload profiles W1–W5. |
+| `experiments/` | Matrix runner that executes all 150 runs and computes the composite fitness `J`. |
+| `controller/` | Shared algorithms (fuzzy, granularity tree, PSO, safety) plus the **live** dual-timescale controller, Prometheus client, Knative scaler, and rolling metrics store. |
+| `configs/` | Function/dependency metadata, fuzzy rules, cluster + monitoring configs. |
+| `functions/` | Per-function workload directories (F01–F12). |
+| `scripts/` | Cluster bootstrap/deploy scripts and `plot_results.py` (figures, LaTeX tables, Wilcoxon tests). |
+| `tests/` | 14 unittest modules covering the simulator, fuzzy, PSO, tree, feasibility, workloads, monitor, controller, and plotting. |
+| `results/` | Committed outputs: `raw/` (150 per-run CSVs + summary matrix), `plots/` (Figures 1–4), `tables/` (LaTeX tables 8–11, 16), `stats_summary.txt`. |
+| `docker/` | Base Node.js / Python images for the live path. |
+| `docs/` | Architecture notes and the research paper (LaTeX draft + parsed PDFs). |
 
-## Target evaluation
+Architecture notes live in `docs/architecture/` (`mamdani-fuzzy-rules.md` and
+`prometheus-schema.md`).
 
-The target evaluation compares:
+---
 
-- no prewarming;
-- fixed prewarming;
-- fuzzy-only control;
-- PSO-only control;
-- fuzzy + PSO without dependency granularity; 
-- the complete GranuWarm architecture.
+## Quick start
 
-Each experiment should report latency quantiles, cold-start rate, SLA
-violations, used memory, idle memory, controller overhead, allocation changes,
-and budget violations. Results must be reproducible across W1–W5 workload
-profiles and fixed random seeds.
-
-## Repository orientation
-
-| Area | Target responsibility |
-| --- | --- |
-| `controller/` | Telemetry, fuzzy inference, graph projection, optimization, actuation |
-| `configs/` | Function metadata, dependency graph, fuzzy rules, cluster settings |
-| `simulator/` | Offline implementation of the target control semantics |
-| `baselines/` | Ablation and comparison policies |
-| `workload/` | Workload profiles and live traffic generation |
-| `experiments/` | Matrix execution and result collection |
-| `functions/` | Heterogeneous serverless workloads |
-| `scripts/` | Cluster setup, cleanup, plotting, and reporting |
-| `docs/architecture/` | Target design, current implementation, and migration plan |
-
-### One-Command Reproduction
-
-To regenerate all publication figures (Figures 1–5), LaTeX tables (8–16), and two-tailed Wilcoxon significance tests in a single command:
+### Install
 
 ```bash
-python reproduce.py
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-Options:
-- `python reproduce.py`: Regenerates all plots, tables, and statistics from the saved experimental results.
-- `python reproduce.py --quick`: Runs a fast verification simulation subset and updates all publication artifacts.
-- `python reproduce.py --full`: Re-runs the full 150-run simulation matrix (5 workloads x 6 baselines x 5 seeds) from scratch and updates all publication artifacts.
-- `./reproduce.sh`: Bash wrapper supporting the same arguments.
-
-### Running Simulation Experiments
+### Run a single simulation
 
 ```bash
-# Run quick tests
-python -m pytest tests -q
-
-# Run single simulation experiment
 python simulator/run_sim.py \
   --workload W3 \
   --policy granuwarm \
   --duration 300 \
-  --seed 42
+  --seed 42 \
+  --output results/raw/W3_B6_seed42.csv
+```
 
-# Run full 150-experiment simulation matrix
+`--policy` accepts `b1`–`b6` or aliases (`none`, `fixed`, `fuzzy`, `pso`,
+`granuwarm`). `--budget` defaults to **8192 MB**.
+
+### Run the full experiment matrix
+
+```bash
+# 5 workloads x 6 baselines x 5 seeds = 150 runs
 python -m experiments.run_experiment --full
 ```
 
-### Running Live Kubernetes Experiments
+Seeds are `[42, 123, 456, 789, 1024]`; the paper's N=10 significance subset uses
+seeds 42 and 123. Output lands in `results/raw/` (per-run traces +
+`summary_experiment_matrix.csv`).
+
+### One-command reproduction
 
 ```bash
-# Deploy services to Knative (using pre-built local images)
-./scripts/deploy_simple_services.sh
-
-# Run end-to-end live experiment (traffic + controller actuation)
-./run_one_experiment.sh 60 15
+python reproduce.py            # regenerate figures/tables/stats from saved results
+python reproduce.py --quick   # mini smoke-test matrix + artifacts
+python reproduce.py --full    # re-run all 150 simulations + artifacts
 ```
 
-### Generating Publication Figures & Tables
+`reproduce.py` runs the experiment matrix (if requested) then
+`scripts/plot_results.py`, which produces Figures 1–5, LaTeX tables 8–11 and
+16, and the two-tailed Wilcoxon signed-rank tests written to
+`results/stats_summary.txt`.
 
-Generate all publication-ready plots (Figures 1–5), LaTeX tables (8–16), and Wilcoxon significance tests directly from real experimental data (no mocks):
+### Tests
 
 ```bash
-python scripts/plot_results.py
+python -m pytest tests -q      # 78 tests, ~4 s
 ```
+
+---
+
+## Results & statistical significance
+
+Committed results in `results/raw/` contain 150 per-run CSVs plus the summary
+matrix. `scripts/plot_results.py` computes a post-run composite fitness
+
+```
+J = 0.35·(P95/1000) + 0.25·(CSR/100) + 0.25·(Mem/Budget) + 0.15·(SVR/100)
+```
+
+whose weights (0.35 / 0.25 / 0.25 / 0.15) match the paper's `w_L / w_C / w_M /
+w_S`, and runs two-tailed Wilcoxon signed-rank tests of
+`H0: median(J_baseline − J_B6) = 0`.
+
+`results/stats_summary.txt` reports:
+
+- **Paper matrix (seeds 42 & 123, N = 10):** B6 strictly dominates every
+  baseline on all 10 paired trials → `W = 0.0`, `p = 0.00195` for B1–B5. This
+  matches the paper exactly.
+- **Full matrix (all 5 seeds, N = 25):** `W = 0.0`, `p = 5.96e-08` for B1–B5.
+
+The qualitative ordering (B6 best on composite `J`, then B2, then the
+non-granular dynamic baselines) and the statistical significance are
+reproducible from the committed results.
+
+---
+
+## The live Kubernetes path
+
+The live path is functional, production-grade code (not scaffolding) and is
+secondary to the research:
+
+- `controller/main.py` (`GranuWarmController`) implements the true
+  **dual-timescale loop**: a fast 10 s fuzzy/bounded-delta loop and a slow 60 s
+  PSO re-optimization, with modes `simulation | replay | dry_run | shadow |
+  live`. Only `live` performs Kubernetes writes.
+- `controller/monitor/prometheus_client.py` issues real PromQL, validates the
+  metric schema, and raises on stale/missing telemetry (no silent fallback
+  unless explicitly enabled).
+- `controller/allocator/knative_scaler.py` uses the real `kubernetes` client to
+  patch Knative Service `autoscaling.knative.dev/min-scale`, with idempotency,
+  hysteresis deadband on scale-down, exponential-backoff retries, and startup
+  reconciliation.
+- `configure_baseline.py` shells out to `kubectl` to configure B1/B2 static
+  `min-scale` (and resets it for B3–B6, where the controller decides
+  dynamically).
+- `docker/` holds base Node.js/Python images; `scripts/` holds cluster
+  bootstrap, build/load, and deploy scripts.
+
+Figure 5 (live validation CDF) is generated only when
+`results/live_experiments/W3_b6_seed42_traffic.csv` is present, i.e. after a
+live experiment has been run against a cluster.
+
+---
+
+## Research paper
+
+The accompanying paper drafts the full GranuWarm design, formulation, and
+evaluation:
+
+- **Draft (Overleaf/TeX):** [`docs/our-research-paper/granu-draft.tex`](docs/our-research-paper/granu-draft.tex)
+- **Parsed reference papers:** `docs/research-paper-parsed/` (the GranuWarm
+  draft and related survey papers as Markdown).
+
+The paper formalizes the cold-start latency model, the dependency-granularity
+decomposition and partial-warm-start latency, the constrained allocation
+objective `J`, the dual-timescale control loop, and the six-configuration
+ablation across the five workload regimes.
 
 ## Research questions
 
-1. Does workload-aware fuzzy control reduce cold-start frequency and latency
-   compared with no or fixed prewarming?
-2. Does constrained PSO improve the latency/resource trade-off beyond fuzzy
-   control alone?
-3. Does dependency-granularity modeling improve resource efficiency compared
-   with function-level prewarming?
+1. **RQ1** — Does workload-aware fuzzy control reduce cold-start frequency and
+   latency compared with no or fixed pre-warming?
+2. **RQ2** — Does constrained PSO improve the latency/resource trade-off beyond
+   fuzzy control alone?
+3. **RQ3** — Does dependency-granularity modeling improve resource efficiency
+   compared with function-level pre-warming?
+
+The ablation (B1 → B3 → B5 → B6) isolates each contribution; `scripts/plot_results.py`
+annotates Figure 4 with the measured per-stage `J` drops.
+
+---
 
 ## Citation
 
 ```bibtex
 @article{granuwarm2026,
-  title   = {GranuWarm: Adaptive Dependency-Aware Prewarming for Serverless
+  title   = {GranuWarm: Adaptive Dependency-Aware Pre-warming for Serverless
              Functions Under Non-Stationary Workloads Using Fuzzy-Controlled
              Constrained Particle Swarm Optimization},
-  author  = {Arya, Harshit and Gupta, Tijil and Rawat, Ayush and Yadav, Bhavya},
+  author  = {Arya, Harshit and Rawat, Ayush and Yadav, Bhavya and Gupta, Tijil},
   year    = {2026}
 }
 ```
