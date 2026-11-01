@@ -42,9 +42,9 @@ def run_experiment_matrix(
     workloads: List[str],
     baselines: List[str],
     seeds: List[int],
-    duration: float = 1000.0,
+    duration: float = 300.0,
     config_path: str = "configs/dependencies.json",
-    memory_budget_mb: float = 4096.0,
+    memory_budget_mb: float = 8192.0,
     raw_dir: str = "results/raw"
 ):
     os.makedirs(raw_dir, exist_ok=True)
@@ -132,8 +132,8 @@ def main():
     parser.add_argument("--workloads", nargs="+", default=None, help="Workloads to run (e.g. W1 W2 W3 W4 W5)")
     parser.add_argument("--baselines", nargs="+", default=None, help="Baselines to run (e.g. B1 B2 B3 B4 B5 B6)")
     parser.add_argument("--seeds", nargs="+", type=int, default=None, help="Seeds to run (e.g. 42 123 456)")
-    parser.add_argument("--duration", type=float, default=600.0, help="Duration per run in seconds")
-    parser.add_argument("--budget", type=float, default=4096.0, help="Memory budget in MB")
+    parser.add_argument("--duration", type=float, default=300.0, help="Duration per run in seconds")
+    parser.add_argument("--budget", type=float, default=8192.0, help="Memory budget in MB")
     parser.add_argument("--config", type=str, default="configs/dependencies.json")
     parser.add_argument("--output-dir", type=str, default="results/raw")
 

@@ -15,7 +15,7 @@ class AllocationRequest:
     node_capacities: Dict[str, int]
     source: str                       # "fuzzy" | "pso" | "proportional"
     cycle_id: str = field(default_factory=lambda: _new_id("cyc"))
-    requested_budget_mb: float = 4096.0
+    requested_budget_mb: float = 8192.0
 
 
 @dataclass(frozen=True)

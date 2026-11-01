@@ -8,9 +8,9 @@ class B2FixedPrewarmPolicy(BasePolicy):
     def __init__(
         self,
         function_ids: list[str],
-        fixed_count: int = 2,
+        fixed_count: int = 1,
         function_memories: Optional[Dict[str, float]] = None,
-        memory_budget_mb: float = 4096.0
+        memory_budget_mb: float = 8192.0
     ):
         self.function_ids = function_ids
         self.fixed_count = fixed_count

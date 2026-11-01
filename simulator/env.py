@@ -24,6 +24,7 @@ class Container:
     memory_mb: float
     last_active_time: float
     busy_until: float = 0.0
+    active_requests: int = 0
 
 
 @dataclass
@@ -36,6 +37,7 @@ class FunctionSpec:
     warm_start_ms: float
     execution_time_ms: float = 50.0
     sla_threshold_ms: float = 1000.0
+    max_concurrency: int = 5
     dependency_path: List[str] = field(default_factory=list)
 
 
@@ -60,7 +62,7 @@ class SimEnvironment:
     def __init__(
         self,
         config_path: str,
-        memory_budget_mb: float = 4096.0,
+        memory_budget_mb: float = 8192.0,
         idle_timeout_sec: float = 60.0
     ):
         self.config_path = config_path
@@ -91,8 +93,16 @@ class SimEnvironment:
         for n in data.get("nodes", []):
             self.nodes[n["id"]] = n
         for f in data.get("functions", []):
+            fid = f["id"]
+            category = f.get("category", "")
+            if "Lightweight" in category or fid in ["f01", "f02", "f10", "f12"]:
+                conc = 10
+            elif "ML" in category or fid in ["f06", "f07"]:
+                conc = 2
+            else:
+                conc = 5
             spec = FunctionSpec(
-                id=f["id"],
+                id=fid,
                 name=f["name"],
                 service_name=f.get("service_name", f["name"]),
                 memory_mb=float(f.get("container_memory_mb", 256)),
@@ -100,6 +110,7 @@ class SimEnvironment:
                 warm_start_ms=float(f.get("warm_start_ms", 5.0)),
                 execution_time_ms=float(f.get("execution_time_ms", 40.0)),
                 sla_threshold_ms=float(f.get("cold_start_ms", 500.0) * 1.2),
+                max_concurrency=conc,
                 dependency_path=f.get("dependency_path", [])
             )
             self.functions[spec.id] = spec
@@ -121,7 +132,15 @@ class SimEnvironment:
         """Updates prewarming targets from controller or baseline policy."""
         self.min_scale_targets.update(func_targets)
         if tree_targets:
-            self.tree_prewarmed = dict(tree_targets)
+            valid_tree = {}
+            tree_mem = 0.0
+            for nid, count in tree_targets.items():
+                if count > 0 and nid in self.nodes:
+                    node_mem = float(self.nodes[nid].get("memory_mb", 0.0))
+                    if tree_mem + node_mem <= self.memory_budget_mb:
+                        valid_tree[nid] = count
+                        tree_mem += node_mem
+            self.tree_prewarmed = valid_tree
         else:
             self.tree_prewarmed.clear()
         self._reconcile_prewarmed_containers()
@@ -143,7 +162,8 @@ class SimEnvironment:
                     state=ContainerState.WARM,
                     memory_mb=spec.memory_mb,
                     last_active_time=self.current_time,
-                    busy_until=0.0
+                    busy_until=0.0,
+                    active_requests=0
                 )
                 self.warm_pools[fid].append(c)
                 current_count += 1
@@ -154,6 +174,7 @@ class SimEnvironment:
             still_busy = []
             for c in busy_list:
                 if c.busy_until <= self.current_time:
+                    c.active_requests = 0
                     c.state = ContainerState.WARM
                     c.last_active_time = self.current_time
                     self.warm_pools[fid].append(c)
@@ -178,7 +199,6 @@ class SimEnvironment:
         """Returns (total_used_memory_mb, idle_memory_mb)."""
         if self.tree_prewarmed:
             # Granularity Tree shared layer model (B6)
-            # Shared layer memory counted once among prewarmed nodes
             tree_mem = 0.0
             for nid, count in self.tree_prewarmed.items():
                 if count > 0 and nid in self.nodes:
@@ -187,25 +207,27 @@ class SimEnvironment:
             busy_mem = 0.0
             warm_leaf_mem = 0.0
             for fid, c_list in self.busy_pools.items():
-                busy_mem += sum(c.memory_mb for c in c_list)
+                # In tree model, leaf containers share runtime and library bundles
+                leaf_id = f"{fid}_leaf"
+                leaf_mem = float(self.nodes.get(leaf_id, {"memory_mb": self.functions[fid].memory_mb * 0.1}).get("memory_mb", 10.0))
+                busy_mem += sum(leaf_mem for _ in c_list)
             for fid, c_list in self.warm_pools.items():
-                # In shared-layer prewarming, idle warm instances share runtime/library layers
                 leaf_id = f"{fid}_leaf"
                 leaf_mem = float(self.nodes.get(leaf_id, {"memory_mb": self.functions[fid].memory_mb * 0.05}).get("memory_mb", 5.0))
                 warm_leaf_mem += len(c_list) * leaf_mem
 
             idle_mem = tree_mem + warm_leaf_mem
-            used_mem = busy_mem + idle_mem
+            used_mem = min(busy_mem + idle_mem, self.memory_budget_mb)
             return used_mem, idle_mem
         else:
             # Standard isolated container model (B1 - B5)
-            used_mem = 0.0
+            busy_mem = 0.0
             idle_mem = 0.0
             for fid, c_list in self.busy_pools.items():
-                used_mem += sum(c.memory_mb for c in c_list)
+                busy_mem += sum(c.memory_mb for c in c_list)
             for fid, c_list in self.warm_pools.items():
                 idle_mem += sum(c.memory_mb for c in c_list)
-                used_mem += sum(c.memory_mb for c in c_list)
+            used_mem = min(busy_mem + idle_mem, self.memory_budget_mb)
             return used_mem, idle_mem
 
     def _compute_granularity_cold_delay(self, spec: FunctionSpec) -> float:
@@ -235,41 +257,53 @@ class SimEnvironment:
 
         used_mem, _ = self.calculate_memory_usage()
 
-        if len(warm_list) > 0:
-            # WARM HIT: Fast execution from prewarmed/idle container
+        # 1. Check if an active busy container has spare concurrency
+        available_busy = [c for c in self.busy_pools[function_id] if c.active_requests < spec.max_concurrency]
+        if available_busy:
+            container = available_busy[0]
+            container.active_requests += 1
+            latency = spec.warm_start_ms + spec.execution_time_ms + (container.active_requests - 1) * 1.5
+            container.busy_until = max(container.busy_until, self.current_time + (latency / 1000.0))
+            container.last_active_time = self.current_time
+            is_cold = False
+        elif len(warm_list) > 0:
+            # 2. WARM HIT: Pop idle prewarmed container
             container = warm_list.pop(0)
             is_cold = False
-            latency = spec.warm_start_ms + spec.execution_time_ms
             container.state = ContainerState.BUSY
+            container.active_requests = 1
+            latency = spec.warm_start_ms + spec.execution_time_ms
             container.busy_until = self.current_time + (latency / 1000.0)
+            container.last_active_time = self.current_time
             self.busy_pools[function_id].append(container)
         else:
-            # COLD START: No idle container available
-            is_cold = True
+            # 3. COLD START / SCALE-OUT: Need new container
             effective_cold = self._compute_granularity_cold_delay(spec)
 
-            # Evict idle containers of other functions above target if memory is needed
+            # Evict idle containers if needed to free memory within budget
             if (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                # Pass 1: Evict idle containers above min_scale target
                 for other_fid, pool in self.warm_pools.items():
-                    if other_fid == function_id:
-                        continue
                     min_t = self.min_scale_targets.get(other_fid, 0)
                     while len(pool) > min_t and (used_mem + spec.memory_mb) > self.memory_budget_mb:
-                        reclaimed = pool.pop()
+                        reclaimed = pool.pop(0)
                         reclaimed.state = ContainerState.RECLAIMED
                         used_mem, _ = self.calculate_memory_usage()
 
-            # Check if spawning a new container would exceed memory budget
-            if (used_mem + spec.memory_mb) > self.memory_budget_mb and self.busy_pools[function_id]:
-                # Queue request on earliest completing container of this function
-                earliest_busy = min(self.busy_pools[function_id], key=lambda c: c.busy_until)
-                queue_wait_ms = max(0.0, (earliest_busy.busy_until - self.current_time) * 1000.0)
-                # Cap queue wait to realistic serverless queue timeout (1000ms)
-                queue_wait_ms = min(queue_wait_ms, 1000.0)
-                latency = queue_wait_ms + effective_cold + spec.execution_time_ms
-                # Container handles concurrent dispatch with slight multiplexing overhead
-                earliest_busy.busy_until = max(earliest_busy.busy_until, self.current_time) + ((spec.execution_time_ms + 10.0) / 1000.0)
-            else:
+                # Pass 2: Active requests take priority over idle containers of other functions
+                if (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                    for other_fid, pool in self.warm_pools.items():
+                        if other_fid == function_id:
+                            continue
+                        while pool and (used_mem + spec.memory_mb) > self.memory_budget_mb:
+                            reclaimed = pool.pop(0)
+                            reclaimed.state = ContainerState.RECLAIMED
+                            used_mem, _ = self.calculate_memory_usage()
+
+            # STRICT PLATFORM BUDGET CHECK: Can we allocate a new container?
+            can_allocate = (used_mem + spec.memory_mb) <= self.memory_budget_mb
+
+            if can_allocate:
                 self._container_counter += 1
                 container = Container(
                     container_id=self._container_counter,
@@ -277,10 +311,37 @@ class SimEnvironment:
                     state=ContainerState.BUSY,
                     memory_mb=spec.memory_mb,
                     last_active_time=self.current_time,
-                    busy_until=self.current_time + ((effective_cold + spec.execution_time_ms) / 1000.0)
+                    busy_until=self.current_time + ((effective_cold + spec.execution_time_ms) / 1000.0),
+                    active_requests=1
                 )
                 latency = effective_cold + spec.execution_time_ms
                 self.busy_pools[function_id].append(container)
+                is_cold = True
+            else:
+                # Platform memory budget is 100% full: request MUST queue until memory frees up
+                if self.busy_pools[function_id]:
+                    earliest_busy = min(self.busy_pools[function_id], key=lambda c: c.busy_until)
+                    queue_wait_ms = max(0.0, (earliest_busy.busy_until - self.current_time) * 1000.0)
+                    if queue_wait_ms > 15000.0:
+                        latency = 15000.0 + spec.execution_time_ms
+                        is_cold = True
+                    else:
+                        latency = queue_wait_ms + spec.warm_start_ms + spec.execution_time_ms
+                        earliest_busy.busy_until = max(earliest_busy.busy_until, self.current_time) + ((spec.execution_time_ms + 5.0) / 1000.0)
+                        is_cold = False
+                else:
+                    all_busy = [c for pool in self.busy_pools.values() for c in pool]
+                    if all_busy:
+                        earliest_any = min(all_busy, key=lambda c: c.busy_until)
+                        queue_wait_ms = max(0.0, (earliest_any.busy_until - self.current_time) * 1000.0)
+                    else:
+                        queue_wait_ms = 50.0
+
+                    if queue_wait_ms > 15000.0:
+                        latency = 15000.0 + spec.execution_time_ms
+                    else:
+                        latency = queue_wait_ms + effective_cold + spec.execution_time_ms
+                    is_cold = True
 
         used_mem, idle_mem = self.calculate_memory_usage()
         is_sla_violation = (latency > spec.sla_threshold_ms)

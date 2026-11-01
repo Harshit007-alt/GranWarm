@@ -35,7 +35,7 @@ def instantiate_policy(policy_name: str, config_path: str, memory_budget_mb: flo
     if p in ["b1", "none", "no_prewarm"]:
         return B1NoPrewarmPolicy(fids)
     elif p in ["b2", "fixed", "fixed_prewarm"]:
-        return B2FixedPrewarmPolicy(fids, fixed_count=2, function_memories=fmems, memory_budget_mb=memory_budget_mb)
+        return B2FixedPrewarmPolicy(fids, fixed_count=1, function_memories=fmems, memory_budget_mb=memory_budget_mb)
     elif p in ["b3", "fuzzy", "fuzzy_only"]:
         return B3FuzzyOnlyPolicy(fids, fmems, memory_budget_mb=memory_budget_mb)
     elif p in ["b4", "pso", "pso_only"]:
@@ -160,7 +160,7 @@ def main():
     parser.add_argument("--duration", type=float, default=1000.0, help="Simulated seconds (default: 1000)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--config", type=str, default="configs/dependencies.json", help="Path to dependencies.json")
-    parser.add_argument("--budget", type=float, default=4096.0, help="Cluster memory budget in MB")
+    parser.add_argument("--budget", type=float, default=8192.0, help="Cluster memory budget in MB")
     parser.add_argument("--output", type=str, default=None, help="Output CSV filepath")
 
     args = parser.parse_args()

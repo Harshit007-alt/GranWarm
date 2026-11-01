@@ -22,7 +22,7 @@ class DiscreteConstrainedPSO:
         dimension: int = 20,
         swarm_size: int = 30,
         max_iter: int = 50,
-        memory_budget_mb: float = 4096.0,
+        memory_budget_mb: float = 8192.0,
         node_memories: Optional[np.ndarray] = None,
         node_ids: Optional[List[str]] = None,
         parent_map: Optional[Dict[str, Optional[str]]] = None,

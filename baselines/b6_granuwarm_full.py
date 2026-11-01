@@ -15,7 +15,7 @@ class B6GranuWarmFullPolicy(BasePolicy):
         self,
         tree_config: str = "configs/dependencies.json",
         rules_config: str = "configs/fuzzy_rules.json",
-        memory_budget_mb: float = 4096.0,
+        memory_budget_mb: float = 8192.0,
         swarm_size: int = 30,
         max_iter: int = 50
     ):

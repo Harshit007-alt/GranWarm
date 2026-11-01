@@ -12,7 +12,7 @@ class B5FuzzyPSONoGranularityPolicy(BasePolicy):
         self,
         function_ids: list[str],
         function_memories: Dict[str, float],
-        memory_budget_mb: float = 4096.0,
+        memory_budget_mb: float = 8192.0,
         rules_config: str = "configs/fuzzy_rules.json",
         swarm_size: int = 30,
         max_iter: int = 40

@@ -89,7 +89,7 @@ class GranuWarmController:
         tree_config: str = "configs/dependencies.json",
         rules_config: str = "configs/fuzzy_rules.json",
         prometheus_url: str = "http://127.0.0.1:9090",
-        memory_budget_mb: float = 4096.0,
+        memory_budget_mb: float = 8192.0,
         dt_fast_sec: float = 10.0,
         dt_slow_sec: float = 60.0,
         mode: OperatingMode = OperatingMode.DRY_RUN,
@@ -694,7 +694,7 @@ def main():
     profile_configs = {
         "default": {
             "config": "configs/dependencies.json",
-            "budget": 4096.0,
+            "budget": 8192.0,
             "dt_fast": 10.0,
             "dt_slow": 60.0,
             "pso_swarm_size": 30,
