@@ -32,19 +32,54 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 os.makedirs(TABLES_DIR, exist_ok=True)
 os.makedirs(RAW_DIR, exist_ok=True)
 
+import time
 
-def load_real_summary_data() -> pd.DataFrame:
-    """Loads results/raw/summary_experiment_matrix.csv generated from real experiment runs."""
+
+def safe_savefig(path: str, **kwargs):
+    """Safely saves figure, handling transient Windows OS file-lock race conditions."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    for attempt in range(4):
+        try:
+            plt.savefig(path, **kwargs)
+            return
+        except OSError:
+            if attempt == 3:
+                raise
+            time.sleep(0.3)
+
+
+def load_summary_data() -> pd.DataFrame:
+    """Load experiment results from the recorded summary CSV."""
     summary_path = os.path.join(RAW_DIR, "summary_experiment_matrix.csv")
     if not os.path.exists(summary_path):
         raise FileNotFoundError(
-            f"Missing {summary_path}. Run experiments first via: "
-            "python -m experiments.run_experiment --full"
+            f"Experiment results not found: {summary_path}. "
+            "Run the experiment matrix before plotting."
         )
+
     df = pd.read_csv(summary_path)
-    if len(df) == 0:
-        raise ValueError(f"{summary_path} is empty.")
+    if df.empty:
+        raise ValueError(f"Experiment results are empty: {summary_path}")
+    required_columns = {
+        "workload",
+        "baseline",
+        "seed",
+        "p95_latency_ms",
+        "cold_start_rate_pct",
+        "avg_memory_used_mb",
+        "sla_violation_rate_pct",
+        "composite_cost",
+    }
+    missing_columns = required_columns.difference(df.columns)
+    if missing_columns:
+        raise ValueError(
+            "Experiment results are missing required columns: "
+            + ", ".join(sorted(missing_columns))
+        )
     return df
+
+
+load_real_summary_data = load_summary_data
 
 
 def plot_figure_1_pareto(df: pd.DataFrame):
@@ -82,8 +117,8 @@ def plot_figure_1_pareto(df: pd.DataFrame):
     plt.title("Figure 1: Latency vs. Memory Pareto Frontier", fontweight="bold")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.legend(loc="upper right", frameon=True)
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_1_pareto.png"))
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_1_pareto.pdf"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_1_pareto.png"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_1_pareto.pdf"))
     plt.close()
 
 
@@ -97,17 +132,12 @@ def plot_figure_2_csr(df: pd.DataFrame):
     plt.grid(axis="y", linestyle="--", alpha=0.5)
     plt.legend(title="Baseline", loc="upper left")
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_2_csr.png"))
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_2_csr.pdf"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_2_csr.png"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_2_csr.pdf"))
     plt.close()
 
 
 def plot_figure_3_temporal():
-    """Figure 3: Real Temporal Adaptation Tracking for B6 on W5 (regime-switching workload)."""
-    # For summary-based plots, we skip temporal tracking since it requires raw time-series data
-    # This would need individual raw CSV files with timestamps
-    print("  Skipping Figure 3 (requires time-series data from raw CSVs)")
-    return
     """Figure 3: Temporal Dynamic Adaptation Under Bursty Traffic (W3).
     
     Uses REAL per-request traces from W3_B6_seed42.csv and W3_B2_seed42.csv (no mocks).
@@ -166,8 +196,8 @@ def plot_figure_3_temporal():
     ax3.grid(True, linestyle="--", alpha=0.5)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_3_temporal.png"))
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_3_temporal.pdf"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_3_temporal.png"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_3_temporal.pdf"))
     plt.close()
 
 
@@ -218,8 +248,8 @@ def plot_figure_4_ablation(df: pd.DataFrame):
         )
 
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_4_ablation.png"))
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_4_ablation.pdf"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_4_ablation.png"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_4_ablation.pdf"))
     plt.close()
 
 
@@ -266,8 +296,8 @@ def plot_figure_5_live_validation():
     ax2.grid(axis="x", linestyle="--", alpha=0.5)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_5_live_validation.png"))
-    plt.savefig(os.path.join(PLOTS_DIR, "figure_5_live_validation.pdf"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_5_live_validation.png"))
+    safe_savefig(os.path.join(PLOTS_DIR, "figure_5_live_validation.pdf"))
     plt.close()
     print("[OK] Figure 5 (Live Cluster Validation) generated successfully.")
 
@@ -342,31 +372,42 @@ def generate_latex_tables(df: pd.DataFrame):
         f.write(df_to_latex_table(overhead_df, "Controller Execution Overhead and Resource Utilization", "tab:overhead"))
 
 
-def wilcoxon_signed_rank(x, y):
-    """Calculates non-parametric Wilcoxon signed-rank test (one-sided: x < y)."""
-    diffs = np.array(x, dtype=float) - np.array(y, dtype=float)
-    diffs = diffs[diffs != 0]
-    n = len(diffs)
-    if n == 0:
-        return 0.0, 1.0
-    abs_diffs = np.abs(diffs)
-    order = np.argsort(abs_diffs)
-    ranks = np.zeros(n, dtype=float)
-    for r, idx in enumerate(order, 1):
-        ranks[idx] = r
-    w_plus = float(np.sum(ranks[diffs > 0]))
-    mu = n * (n + 1) / 4.0
-    sigma = math.sqrt(n * (n + 1) * (2 * n + 1) / 24.0)
-    z = (w_plus - mu) / max(sigma, 1e-9)
-    p_val = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-    return w_plus, p_val
+def wilcoxon_signed_rank(x, y, alternative: str = "two-sided"):
+    """Calculates non-parametric Wilcoxon signed-rank test (two-sided by default, matching paper)."""
+    try:
+        from scipy.stats import wilcoxon
+        res = wilcoxon(x, y, alternative=alternative)
+        return float(res.statistic), float(res.pvalue)
+    except Exception:
+        diffs = np.array(x, dtype=float) - np.array(y, dtype=float)
+        diffs = diffs[diffs != 0]
+        n = len(diffs)
+        if n == 0:
+            return 0.0, 1.0
+        abs_diffs = np.abs(diffs)
+        order = np.argsort(abs_diffs)
+        ranks = np.zeros(n, dtype=float)
+        for r, idx in enumerate(order, 1):
+            ranks[idx] = r
+        w_plus = float(np.sum(ranks[diffs > 0]))
+        w_minus = float(np.sum(ranks[diffs < 0]))
+        w_stat = min(w_plus, w_minus)
+        if w_stat == 0.0:
+            p_val = 2.0 * (0.5 ** n) if alternative == "two-sided" else (0.5 ** n)
+            return w_stat, min(p_val, 1.0)
+        mu = n * (n + 1) / 4.0
+        sigma = math.sqrt(n * (n + 1) * (2 * n + 1) / 24.0)
+        z = (w_stat - mu + 0.5) / max(sigma, 1e-9)
+        p_one_tail = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+        p_val = 2.0 * p_one_tail if alternative == "two-sided" else p_one_tail
+        return w_stat, min(p_val, 1.0)
 
 
 def compute_wilcoxon_tests(df: pd.DataFrame):
     """Calculates non-parametric Wilcoxon signed-rank tests for B6 vs B1..B5 from real data."""
     summary_txt = []
     summary_txt.append("=== GranuWarm Wilcoxon Signed-Rank Significance Tests ===")
-    summary_txt.append("Hypothesis: GranuWarm (B6) achieves strictly lower composite cost than baseline.\n")
+    summary_txt.append("Two-tailed hypothesis testing (H0: Median(JBaseline - JB6) = 0 vs H1: Median(JBaseline - JB6) != 0, alpha = 0.05)\n")
 
     b6_df = df[df["baseline"] == "B6"][["workload", "seed", "composite_cost"]]
     if b6_df.empty:
@@ -377,6 +418,27 @@ def compute_wilcoxon_tests(df: pd.DataFrame):
             f.write(summary_content)
         return
 
+    # 1. Primary evaluation matrix from Paper Section 6.5 (Seeds 42 and 123, N = 10 paired trials)
+    df_paper = df[df["seed"].isin([42, 123])]
+    b6_paper = df_paper[df_paper["baseline"] == "B6"][["workload", "seed", "composite_cost"]]
+    has_paper_seeds = set(b6_paper["seed"].unique()) >= {42, 123} and len(b6_paper["workload"].unique()) == 5
+
+    if has_paper_seeds:
+        summary_txt.append("--- Paper Evaluation Matrix (Seeds 42 and 123, N = 10 paired trials) ---")
+        for b in ["B1", "B2", "B3", "B4", "B5"]:
+            b_df = df_paper[df_paper["baseline"] == b][["workload", "seed", "composite_cost"]]
+            merged = pd.merge(b6_paper, b_df, on=["workload", "seed"], suffixes=("_b6", f"_{b.lower()}"))
+            if len(merged) == 10:
+                b6_vals = merged["composite_cost_b6"].values
+                b_vals = merged[f"composite_cost_{b.lower()}"].values
+                stat, p_val = wilcoxon_signed_rank(b6_vals, b_vals, alternative="two-sided")
+                sig_str = "Statistically Significant (p < 0.01)" if p_val < 0.01 else ("Statistically Significant (p < 0.05)" if p_val < 0.05 else "Not Significant")
+                summary_txt.append(f"B6 vs {b} (N=10): Statistic W = {stat:.1f}, p-value = {p_val:.5f} ({sig_str})")
+        summary_txt.append("")
+
+    # 2. Complete experimental evaluation matrix across all available seeds (e.g. N = 25)
+    total_runs = len(b6_df)
+    summary_txt.append(f"--- Complete Runner Evaluation Matrix (All available seeds, N = {total_runs} paired trials) ---")
     for b in ["B1", "B2", "B3", "B4", "B5"]:
         b_df = df[df["baseline"] == b][["workload", "seed", "composite_cost"]]
         merged = pd.merge(b6_df, b_df, on=["workload", "seed"], suffixes=("_b6", f"_{b.lower()}"))
@@ -387,12 +449,12 @@ def compute_wilcoxon_tests(df: pd.DataFrame):
 
         b6_vals = merged["composite_cost_b6"].values
         b_vals = merged[f"composite_cost_{b.lower()}"].values
-        stat, p_val = wilcoxon_signed_rank(b6_vals, b_vals)
-        sig_str = 'Statistically Significant (p < 0.05)' if p_val < 0.05 else 'Not Significant'
+        stat, p_val = wilcoxon_signed_rank(b6_vals, b_vals, alternative="two-sided")
+        sig_str = "Statistically Significant (p < 0.01)" if p_val < 0.01 else ("Statistically Significant (p < 0.05)" if p_val < 0.05 else "Not Significant")
         result = f"B6 vs {b} (N={len(merged)}): Statistic W = {stat:.1f}, p-value = {p_val:.6e} ({sig_str})"
         summary_txt.append(result)
 
-    summary_content = "\n".join(summary_txt)
+    summary_content = "\n".join(summary_txt) + "\n"
     print(summary_content)
     with open(os.path.join(RESULTS_DIR, "stats_summary.txt"), "w") as f:
         f.write(summary_content)

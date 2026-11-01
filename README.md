@@ -262,6 +262,20 @@ profiles and fixed random seeds.
 | `scripts/` | Cluster setup, cleanup, plotting, and reporting |
 | `docs/architecture/` | Target design, current implementation, and migration plan |
 
+### One-Command Reproduction
+
+To regenerate all publication figures (Figures 1–5), LaTeX tables (8–16), and two-tailed Wilcoxon significance tests in a single command:
+
+```bash
+python reproduce.py
+```
+
+Options:
+- `python reproduce.py`: Regenerates all plots, tables, and statistics from the saved experimental results.
+- `python reproduce.py --quick`: Runs a fast verification simulation subset and updates all publication artifacts.
+- `python reproduce.py --full`: Re-runs the full 150-run simulation matrix (5 workloads x 6 baselines x 5 seeds) from scratch and updates all publication artifacts.
+- `./reproduce.sh`: Bash wrapper supporting the same arguments.
+
 ### Running Simulation Experiments
 
 ```bash
