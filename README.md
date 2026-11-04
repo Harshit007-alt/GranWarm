@@ -25,8 +25,9 @@ gate) but differ in how they obtain telemetry and how they actuate:
 | **Offline simulation** | Primary, complete | Event-driven, trace-driven evaluation of all six baseline configurations across five workload regimes. This is the **research focus** and the source of every quantitative result in the paper. | `simulator/run_sim.py`, `experiments/run_experiment.py`, `reproduce.py` |
 | **Live Kubernetes** | Secondary, functional | A dual-timescale controller that reads Prometheus telemetry and actuates Knative `min-scale` on a real cluster. | `controller/main.py`, `configure_baseline.py`, `scripts/deploy_*.sh` |
 
-The offline path is self-contained and needs no cluster. All published figures,
-tables, and statistical tests are reproducible from the offline path alone.
+The offline path is self-contained and needs no cluster. All committed research
+figures, tables, and statistical tests are reproducible from the offline path
+alone.
 
 ---
 
@@ -110,7 +111,8 @@ All six are real, distinct policies in `baselines/`, subclassing
 
 ### Workload regimes
 
-Five canonical regimes in `workload/profiles.py`, each 30 minutes by default:
+Five canonical regimes in `workload/profiles.py`, evaluated for 300 seconds per
+run by the experiment runner by default:
 
 - **W1 Stable** — constant Poisson arrivals.
 - **W2 Growth** — linear ramp (`slope = 0.002`).
@@ -141,10 +143,10 @@ inference, data processing), each with `cold_start_ms` (150 ms for F01 up to
 | `configs/` | Function/dependency metadata, fuzzy rules, cluster + monitoring configs. |
 | `functions/` | Per-function workload directories (F01–F12). |
 | `scripts/` | Cluster bootstrap/deploy scripts and `plot_results.py` (figures, LaTeX tables, Wilcoxon tests). |
-| `tests/` | 14 unittest modules covering the simulator, fuzzy, PSO, tree, feasibility, workloads, monitor, controller, and plotting. |
-| `results/` | Committed outputs: `raw/` (150 per-run CSVs + summary matrix), `plots/` (Figures 1–4), `tables/` (LaTeX tables 8–11, 16), `stats_summary.txt`. |
+| `tests/` | 15 test modules covering the simulator, fuzzy, PSO, tree, feasibility, workloads, monitor, controller, and plotting. |
+| `results/` | Committed outputs: `raw/` (150 per-run CSVs + summary matrix), `plots/` (Figures 1–4), `tables/` (LaTeX tables 8–11, 16), `stats_summary.txt`. Figure 5 is generated only after a live run. |
 | `docker/` | Base Node.js / Python images for the live path. |
-| `docs/` | Architecture notes and the research paper (LaTeX draft + parsed PDFs). |
+| `docs/` | Architecture notes, paper PDFs, and parsed paper Markdown. |
 
 Architecture notes live in `docs/architecture/` (`mamdani-fuzzy-rules.md` and
 `prometheus-schema.md`).
@@ -202,8 +204,11 @@ python reproduce.py --full    # re-run all 150 simulations + artifacts
 ### Tests
 
 ```bash
-python -m pytest tests -q      # 78 tests, ~4 s
+python -m pytest tests -q      # 78 tests
 ```
+
+The suite is self-contained and does not require Kubernetes or Prometheus.
+Cluster-dependent checks belong to the live-path setup in [`guide.md`](guide.md).
 
 ---
 
@@ -235,8 +240,8 @@ reproducible from the committed results.
 
 ## The live Kubernetes path
 
-The live path is functional, production-grade code (not scaffolding) and is
-secondary to the research:
+The live path is functional code for cluster validation and is secondary to
+the research:
 
 - `controller/main.py` (`GranuWarmController`) implements the true
   **dual-timescale loop**: a fast 10 s fuzzy/bounded-delta loop and a slow 60 s
@@ -255,9 +260,6 @@ secondary to the research:
 - `docker/` holds base Node.js/Python images; `scripts/` holds cluster
   bootstrap, build/load, and deploy scripts.
 
-Figure 5 (live validation CDF) is generated only when
-`results/live_experiments/W3_b6_seed42_traffic.csv` is present, i.e. after a
-live experiment has been run against a cluster.
 
 ---
 
@@ -266,9 +268,11 @@ live experiment has been run against a cluster.
 The accompanying paper drafts the full GranuWarm design, formulation, and
 evaluation:
 
-- **Draft (Overleaf/TeX):** [`docs/our-research-paper/granu-draft.tex`](docs/our-research-paper/granu-draft.tex)
-- **Parsed reference papers:** `docs/research-paper-parsed/` (the GranuWarm
-  draft and related survey papers as Markdown).
+- **Draft (parsed Markdown):** [`docs/research-paper-parsed/granuwarm_draft.md`](docs/research-paper-parsed/granuwarm_draft.md)
+- **Paper PDFs:** `docs/research-paper/` (the GranuWarm draft and related
+  reference papers).
+- **Parsed reference papers:** `docs/research-paper-parsed/` (Markdown
+  versions of the draft and related papers).
 
 The paper formalizes the cold-start latency model, the dependency-granularity
 decomposition and partial-warm-start latency, the constrained allocation
